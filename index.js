@@ -260,7 +260,7 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
     }
 });
 
-// Webhook Perfect Pay - VERSÃO MELHORADA
+// Webhook Perfect Pay - VERSÃO CORRIGIDA COM ENVIO PARA N8N
 app.post('/webhook/perfect', async (req, res) => {
     try {
         console.log('\n💰 === DEBUG PERFECT PAY ===');
@@ -345,6 +345,18 @@ app.post('/webhook/perfect', async (req, res) => {
                 console.log('📝 Sessão de lead criada:', customerPhone);
             }
             
+            // 🔥 CORREÇÃO CRUCIAL: Enviar PIX GERADO para N8N
+            const sendResult = await sendToN8N(data, 'pending');
+            
+            if (sendResult.success) {
+                addLog('success', 'PIX GERADO enviado para N8N - ' + orderCode);
+                console.log('✅ PIX GERADO enviado para N8N com sucesso!');
+            } else {
+                addLog('error', 'ERRO enviar PIX GERADO - ' + orderCode);
+                console.log('❌ ERRO ao enviar PIX GERADO para N8N:', sendResult.error);
+            }
+            
+            // Configurar timeout do PIX
             if (pendingPixOrders.has(orderCode)) {
                 clearTimeout(pendingPixOrders.get(orderCode).timeout);
             }
@@ -353,9 +365,9 @@ app.post('/webhook/perfect', async (req, res) => {
                 addLog('timeout', 'TIMEOUT PIX - ' + orderCode);
                 pendingPixOrders.delete(orderCode);
                 
-                const sendResult = await sendToN8N(data, 'pix_timeout');
+                const timeoutResult = await sendToN8N(data, 'pix_timeout');
                 
-                if (sendResult.success) {
+                if (timeoutResult.success) {
                     addLog('success', 'PIX TIMEOUT enviado - ' + orderCode);
                 } else {
                     addLog('error', 'ERRO PIX TIMEOUT - ' + orderCode);
@@ -650,7 +662,6 @@ app.get('/', (req, res) => {
         '.then(r => r.json())' +
         '.then(data => {' +
         'document.getElementById("pending-count").textContent = data.pending_pix_orders;' +
-        'document.getElementById("leads-responded").textContent = data.lead_interaction_stats.responded;' +
         'document.getElementById("leads-waiting").textContent = data.lead_interaction_stats.waiting_response;' +
         'document.getElementById("total-received").textContent = data.statistics.total_webhooks_received;' +
         '});' +
@@ -713,4 +724,5 @@ app.listen(PORT, () => {
     console.log('💰 Webhook Perfect Pay: /webhook/perfect');
     console.log('🔍 Debug completo: /debug');
     console.log('📊 Interface: /');
-});
+});-responded").textContent = data.lead_interaction_stats.responded;' +
+        'document.getElementById("leads
