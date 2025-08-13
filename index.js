@@ -10,6 +10,7 @@ let leadPurchases = new Map();
 
 const LOG_RETENTION_TIME = 60 * 60 * 1000; // 1 hora
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://n8n.flowzap.fun/webhook/207400a6-1290-4153-b033-c658e657d717';
+const N8N_WHATSAPP_URL = process.env.N8N_WHATSAPP_URL || 'https://n8n.flowzap.fun/webhook/c0d9ac75-a0db-426c-ad25-09f5d0644c6f';
 const PIX_TIMEOUT = 7 * 60 * 1000; // 7 minutos
 
 app.use(express.json());
@@ -203,7 +204,7 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
                 
                 console.log('📤 Enviando continuação para N8N:', JSON.stringify(continuationPayload, null, 2));
                 
-                const sendResult = await sendToN8N(continuationPayload, 'lead_active_continuation');
+                const sendResult = await sendToN8N(continuationPayload, 'lead_active_continuation', true);
                 
                 if (sendResult.success) {
                     addLog('success', `✅ FLUXO CONTINUADO COM SUCESSO - Lead: ${normalizedPhone} | Pedido: ${purchaseData.orderCode}`);
@@ -377,7 +378,7 @@ app.post('/webhook/perfect', async (req, res) => {
 });
 
 // Função para enviar para N8N
-async function sendToN8N(data, eventType) {
+async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
     try {
         const payload = {
             ...data,
@@ -393,8 +394,8 @@ async function sendToN8N(data, eventType) {
         console.log('URL N8N:', N8N_WEBHOOK_URL);
         
         addLog('info', 'Enviando para N8N - Tipo: ' + eventType);
-        
-        const response = await axios.post(N8N_WEBHOOK_URL, payload, {
+        const webhookUrl = useWhatsAppWebhook ? N8N_WHATSAPP_URL : N8N_WEBHOOK_URL;
+        const response = await axios.post(webhookUrl, payload, {
             headers: {
                 'Content-Type': 'application/json',
                 'User-Agent': 'Perfect-Webhook-System-v2/2.1'
