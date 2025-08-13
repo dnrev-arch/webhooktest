@@ -215,7 +215,9 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
                 };
                 
                 console.log('📤 Enviando continuação para N8N:', JSON.stringify(continuationPayload, null, 2));
-                
+
+                console.log('🚨 TESTE: VAI ENVIAR PARA WEBHOOK1!');
+                console.log('🚨 URL WEBHOOK1:', N8N_WHATSAPP_URL);
                 const sendResult = await sendToN8N(continuationPayload, 'lead_active_continuation', true);
                 
                 if (sendResult.success) {
