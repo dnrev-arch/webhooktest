@@ -15,7 +15,7 @@ const PIX_TIMEOUT = 7 * 60 * 1000; // 7 minutos
 
 app.use(express.json());
 
-// Função para normalizar telefones
+// Função para normalizar telefones - VERSÃO CORRIGIDA
 function normalizePhone(phone) {
     if (!phone) return '';
     
@@ -27,14 +27,18 @@ function normalizePhone(phone) {
         apenas_numeros: normalized
     });
     
+    // NOVA LÓGICA ROBUSTA:
+    
     // Se tem 13 dígitos e começa com 55 (Brasil)
     if (normalized.length === 13 && normalized.startsWith('55')) {
         normalized = normalized.substring(2); // Remove 55
+        console.log('📱 Removido código do país (55):', normalized);
     }
     
-    // Se tem 12 dígitos
+    // Se tem 12 dígitos, remove primeiro dígito
     if (normalized.length === 12) {
-        normalized = normalized.substring(1); // Remove primeiro dígito
+        normalized = normalized.substring(1);
+        console.log('📱 Removido primeiro dígito (12->11):', normalized);
     }
     
     // Se tem 10 dígitos, adiciona 9 no celular
@@ -42,9 +46,17 @@ function normalizePhone(phone) {
         const ddd = normalized.substring(0, 2);
         const numero = normalized.substring(2);
         normalized = ddd + '9' + numero;
+        console.log('📱 Adicionado 9 no celular (10->11):', normalized);
     }
     
-    console.log('📱 Telefone normalizado final:', normalized);
+    // GARANTIR QUE SEMPRE TENHA 11 DÍGITOS
+    if (normalized.length === 11) {
+        console.log('📱 Telefone normalizado final:', normalized);
+        return normalized;
+    }
+    
+    // Se não conseguiu normalizar para 11 dígitos, retorna original
+    console.log('⚠️ Não foi possível normalizar para 11 dígitos:', normalized);
     return normalized;
 }
 
