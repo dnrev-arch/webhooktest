@@ -219,10 +219,7 @@ if (sendResult.success) {
     console.log('❌ ERRO ao enviar continuação para N8N:', sendResult.error);
 }
             }
-        } else {
-            console.log('❌ Não foi possível extrair telefone ou mensagem');
-            addLog('info', '❌ Webhook WhatsApp: dados insuficientes para processar');
-            
+        
             // DEBUG: Mostrar estrutura recebida quando falha
             console.log('📊 Estrutura de dados recebida:', Object.keys(data));
             addLog('info', '📊 Estrutura recebida: ' + Object.keys(data).join(', '));
