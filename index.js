@@ -662,3 +662,38 @@ app.get('/', (req, res) => {
         'console.log("Debug completo:", data);' +
         '});' +
         '}' +
+        'function saveUrl() {' +
+        'const url = document.getElementById("n8n-url").value;' +
+        'fetch("/config/n8n-url", {' +
+        'method: "POST",' +
+        'headers: {"Content-Type": "application/json"},' +
+        'body: JSON.stringify({url: url})' +
+        '})' +
+        '.then(r => r.json())' +
+        '.then(data => {' +
+        'alert(data.message);' +
+        'refreshStatus();' +
+        '});' +
+        '}' +
+        'setInterval(refreshStatus, 10000);' +
+        'refreshStatus();' +
+        '</script>' +
+        '</body>' +
+        '</html>';
+    
+    res.send(htmlContent);
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    addLog('info', 'Sistema v2.1 iniciado na porta ' + PORT);
+    addLog('info', 'Perfect: /webhook/perfect');
+    addLog('info', 'WhatsApp: /webhook/whatsapp-response');
+    addLog('info', 'Debug: /debug');
+    addLog('info', 'Interface: /');
+    console.log('🚀 Servidor rodando na porta ' + PORT);
+    console.log('📱 Webhook WhatsApp: /webhook/whatsapp-response');
+    console.log('💰 Webhook Perfect Pay: /webhook/perfect');
+    console.log('🔍 Debug completo: /debug');
+    console.log('📊 Interface: /');
+});
