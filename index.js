@@ -186,50 +186,38 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             console.log('📊 Total respostas registradas:', leadResponses.size);
             
             // Verificar se existe compra para este telefone
-            const hasPurchase = leadPurchases.has(normalizedPhone);
-            console.log('🛒 Tem compra registrada?', hasPurchase);
-            console.log('📋 Compras registradas:', Array.from(leadPurchases.keys()));
-            
-            if (hasPurchase) {
-                const purchaseData = leadPurchases.get(normalizedPhone);
-                console.log('🛒 Dados da compra encontrada:', purchaseData);
-                
-                addLog('success', `🚀 LEAD ATIVO DETECTADO - Tel: ${normalizedPhone} | Pedido: ${purchaseData.orderCode}`);
-                
-                // Preparar dados para continuação do fluxo
-                const continuationPayload = {
-                    ...purchaseData.originalData,
-                    lead_interaction: {
-                        responded: true,
-                        response_message: message,
-                        response_time: new Date().toISOString(),
-                        phone: normalizedPhone,
-                        customer_name: purchaseData.customerName
-                    },
-                    event_type: 'lead_active_continuation',
-                    processed_at: new Date().toISOString(),
-                    system_info: {
-                        source: 'perfect-webhook-system-v2',
-                        version: '2.1'
-                    }
-                };
-                
-                console.log('📤 Enviando continuação para N8N:', JSON.stringify(continuationPayload, null, 2));
+            // SEMPRE continuar fluxo quando lead responder
+console.log('🎯 Lead respondeu - continuando fluxo automaticamente');
 
-                console.log('🚨 TESTE: VAI ENVIAR PARA WEBHOOK1!');
-                console.log('🚨 URL WEBHOOK1:', N8N_WHATSAPP_URL);
-                const sendResult = await sendToN8N(continuationPayload, 'lead_active_continuation', true);
-                
-                if (sendResult.success) {
-                    addLog('success', `✅ FLUXO CONTINUADO COM SUCESSO - Lead: ${normalizedPhone} | Pedido: ${purchaseData.orderCode}`);
-                    console.log('🎯 FLUXO CONTINUADO COM SUCESSO!');
-                } else {
-                    addLog('error', `❌ ERRO ao continuar fluxo - Lead: ${normalizedPhone} | Erro: ${sendResult.error}`);
-                    console.log('❌ ERRO ao enviar continuação para N8N:', sendResult.error);
-                }
-            } else {
-                addLog('info', `⚠️ Resposta sem compra - Tel: ${normalizedPhone}`);
-                console.log('⚠️ Lead respondeu mas não tem compra registrada');
+// Preparar dados para continuação do fluxo
+const continuationPayload = {
+    lead_interaction: {
+        responded: true,
+        response_message: message,
+        response_time: new Date().toISOString(),
+        phone: normalizedPhone
+    },
+    event_type: 'lead_active_continuation',
+    processed_at: new Date().toISOString(),
+    system_info: {
+        source: 'perfect-webhook-system-v2',
+        version: '2.1'
+    }
+};
+
+console.log('🚨 TESTE: VAI ENVIAR PARA WEBHOOK1!');
+console.log('🚨 URL WEBHOOK1:', N8N_WHATSAPP_URL);
+console.log('📤 Enviando continuação para N8N:', JSON.stringify(continuationPayload, null, 2));
+
+const sendResult = await sendToN8N(continuationPayload, 'lead_active_continuation', true);
+
+if (sendResult.success) {
+    addLog('success', `✅ FLUXO CONTINUADO COM SUCESSO - Lead: ${normalizedPhone}`);
+    console.log('🎯 FLUXO CONTINUADO COM SUCESSO!');
+} else {
+    addLog('error', `❌ ERRO ao continuar fluxo - Lead: ${normalizedPhone} | Erro: ${sendResult.error}`);
+    console.log('❌ ERRO ao enviar continuação para N8N:', sendResult.error);
+}
             }
         } else {
             console.log('❌ Não foi possível extrair telefone ou mensagem');
