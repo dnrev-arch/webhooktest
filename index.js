@@ -584,27 +584,75 @@ app.get('/health', (req, res) => {
     });
 });
 
-// Interface web simplificada (removendo HTML complexo que causava erro)
+// Interface visual restaurada (sem HTML complexo que causa erro)
 app.get('/', (req, res) => {
-    res.json({
-        status: 'online',
-        message: 'Webhook Vendas v2.1 - Sistema Funcionando',
-        endpoints: {
-            perfect_pay: '/webhook/perfect',
-            whatsapp: '/webhook/whatsapp-response',
-            debug: '/debug',
-            health: '/health',
-            status: '/status'
-        },
-        stats: {
-            pending_orders: pendingPixOrders.size,
-            lead_responses: leadResponses.size,
-            lead_purchases: leadPurchases.size
-        },
-        config: {
-            n8n_url: N8N_WEBHOOK_URL
-        }
-    });
+    res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Webhook Vendas v2.1 - CORRIGIDO</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }
+        h1 { color: #333; text-align: center; }
+        .status { background: #4CAF50; color: white; padding: 15px; border-radius: 5px; margin: 20px 0; text-align: center; }
+        .debug-status { background: #ff9800; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; text-align: center; font-size: 14px; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+        .stat-card { background: #f8f9fa; padding: 20px; border-radius: 5px; text-align: center; border-left: 4px solid #007bff; }
+        .stat-value { font-size: 2em; font-weight: bold; color: #007bff; }
+        .stat-label { color: #666; font-size: 0.9em; }
+        .btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px; }
+        .btn:hover { background: #0056b3; }
+        .config { background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Webhook Vendas v2.1 - CORRIGIDO</h1>
+        <div class="status">
+            <strong>Sistema Online</strong> - Monitorando vendas e respostas WhatsApp
+        </div>
+        <div class="debug-status">
+            <strong>✅ CORREÇÃO APLICADA</strong> - Agora enviando para N8N corretamente!
+        </div>
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-value" id="pending-count">${pendingPixOrders.size}</div>
+                <div class="stat-label">PIX Pendentes</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="leads-responded">${leadResponses.size}</div>
+                <div class="stat-label">Leads Responderam</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="leads-waiting">${leadPurchases.size}</div>
+                <div class="stat-label">Aguardando Resposta</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="total-received">${systemLogs.filter(l => l.type === 'webhook_received').length}</div>
+                <div class="stat-label">Total Recebidos</div>
+            </div>
+        </div>
+        <div style="text-align: center; margin: 20px 0;">
+            <button class="btn" onclick="window.location.reload()">🔄 Atualizar</button>
+            <button class="btn" onclick="window.location.href='/debug'">🔍 Debug</button>
+            <button class="btn" onclick="window.location.href='/status'">📊 Status</button>
+        </div>
+        <div class="config">
+            <h3>⚙️ URL N8N Configurada</h3>
+            <p><strong>URL:</strong> ${N8N_WEBHOOK_URL}</p>
+        </div>
+        <div class="config">
+            <h3>📍 Endpoints Disponíveis</h3>
+            <p><strong>Perfect Pay:</strong> /webhook/perfect</p>
+            <p><strong>WhatsApp:</strong> /webhook/whatsapp-response</p>
+            <p><strong>Debug:</strong> /debug</p>
+        </div>
+    </div>
+</body>
+</html>
+    `);
 });
 
 const PORT = process.env.PORT || 3000;
