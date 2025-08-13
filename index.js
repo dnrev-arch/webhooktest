@@ -328,13 +328,15 @@ app.post('/webhook/perfect', async (req, res) => {
                 addLog('info', 'COMPRA REGISTRADA para monitoramento - Tel: ' + customerPhone + ' | Pedido: ' + orderCode);
                 console.log('📝 Lead adicionado para monitoramento:', customerPhone);
             }
+            
+            // CORRIGIDO: Envio para N8N FORA do if
             const sendResult = await sendToN8N(data, 'pending');
-        
-        if (sendResult.success) {
-            addLog('success', 'PIX PENDING enviado - ' + orderCode);
-        } else {
-            addLog('error', 'ERRO enviar PIX PENDING - ' + orderCode);
-        }
+            
+            if (sendResult.success) {
+                addLog('success', 'PIX PENDING enviado - ' + orderCode);
+            } else {
+                addLog('error', 'ERRO enviar PIX PENDING - ' + orderCode);
+            }
             
             if (pendingPixOrders.has(orderCode)) {
                 clearTimeout(pendingPixOrders.get(orderCode).timeout);
@@ -384,20 +386,16 @@ app.post('/webhook/perfect', async (req, res) => {
     }
 });
 
-// Função para enviar para N8N
+// Função para enviar para N8N - CORRIGIDA
 async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
-   try {
+    try {
         console.log('\n🔧 === DEBUG FUNÇÃO sendToN8N ===');
         console.log('📥 Parâmetros recebidos:', {
             eventType,
             useWhatsAppWebhook,
             hasData: !!data
         });
-       console.log('📥 Parâmetros recebidos:', {
-            eventType,
-            useWhatsAppWebhook,
-            hasData: !!data
-        });
+        
         const webhookUrl = useWhatsAppWebhook ? N8N_WHATSAPP_URL : N8N_WEBHOOK_URL;
         
         console.log('🎯 URL selecionada:', webhookUrl);
@@ -454,6 +452,7 @@ async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
         
         return { success: false, error: errorMessage };
     }
+}
 
 // NOVO: Endpoint debug completo
 app.get('/debug', (req, res) => {
