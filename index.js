@@ -84,10 +84,10 @@ function cleanOldLeads() {
 
 setInterval(cleanOldLeads, 60 * 60 * 1000);
 
-// WEBHOOK WHATSAPP - VERSÃO DEBUG TOTAL PARA CAPTURAR TUDO
+// WEBHOOK WHATSAPP - VERSÃO CORRIGIDA PARA N8N
 app.post('/webhook/whatsapp-response', async (req, res) => {
     try {
-        console.log('\n🔍 === WEBHOOK WHATSAPP DEBUG TOTAL ===');
+        console.log('\n🔍 === WEBHOOK WHATSAPP RESPOSTA ===');
         console.log('Body completo:', JSON.stringify(req.body, null, 2));
         
         const data = req.body;
@@ -95,11 +95,8 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
         // REGISTRAR TUDO que chega - para debug
         addLog('info', '📱 WEBHOOK WHATSAPP RECEBIDO: ' + JSON.stringify(data).substring(0, 200) + '...');
         
-        // FORÇAR detecção de QUALQUER telefone válido
+        // Extrair telefone
         let phone = null;
-        let message = null;
-        
-        // Tentar TODAS as formas possíveis de extrair telefone
         const phoneAttempts = [
             data.key?.remoteJid,
             data.data?.key?.remoteJid,
@@ -119,7 +116,8 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             }
         }
         
-        // Tentar TODAS as formas possíveis de extrair mensagem
+        // Extrair mensagem
+        let message = null;
         const messageAttempts = [
             data.message?.conversation,
             data.data?.message?.conversation,
@@ -183,9 +181,26 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
                 
                 addLog('success', `🚀 LEAD ATIVO DETECTADO - Tel: ${normalizedPhone} | Pedido: ${purchaseData.orderCode}`);
                 
-                // Preparar dados para continuação do fluxo
-                const continuationPayload = {
-                    ...purchaseData.originalData,
+                // ✨ NOVA VERSÃO: Preparar dados para continuação do fluxo N8N
+                const reactivationPayload = {
+                    event_type: 'lead_active_continuation', // 🔑 CHAVE PARA O N8N
+                    customer_response: {
+                        message: message,
+                        phone: normalizedPhone,
+                        response_time: new Date().toISOString(),
+                        session_id: purchaseData.orderCode
+                    },
+                    original_order: {
+                        code: purchaseData.orderCode,
+                        customer_name: purchaseData.customerName,
+                        amount: purchaseData.amount,
+                        phone: normalizedPhone,
+                        plan: {
+                            code: purchaseData.originalData?.plan?.code || 'PPLQOMOVD'
+                        }
+                    },
+                    session_data: purchaseData,
+                    // Manter compatibilidade com versão anterior
                     lead_interaction: {
                         responded: true,
                         response_message: message,
@@ -193,24 +208,24 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
                         phone: normalizedPhone,
                         customer_name: purchaseData.customerName
                     },
-                    event_type: 'lead_active_continuation',
                     processed_at: new Date().toISOString(),
                     system_info: {
                         source: 'perfect-webhook-system-v2',
-                        version: '2.1'
+                        version: '2.1',
+                        action: 'flow_reactivation'
                     }
                 };
                 
-                console.log('📤 Enviando continuação para N8N:', JSON.stringify(continuationPayload, null, 2));
+                console.log('📤 ENVIANDO REATIVAÇÃO PARA N8N:', JSON.stringify(reactivationPayload, null, 2));
                 
-                const sendResult = await sendToN8N(continuationPayload, 'lead_active_continuation');
+                const sendResult = await sendToN8N(reactivationPayload, 'lead_active_continuation');
                 
                 if (sendResult.success) {
-                    addLog('success', `✅ FLUXO CONTINUADO COM SUCESSO - Lead: ${normalizedPhone} | Pedido: ${purchaseData.orderCode}`);
-                    console.log('🎯 FLUXO CONTINUADO COM SUCESSO!');
+                    addLog('success', `✅ FLUXO REATIVADO COM SUCESSO - Lead: ${normalizedPhone} | Pedido: ${purchaseData.orderCode}`);
+                    console.log('🎯 FLUXO REATIVADO COM SUCESSO!');
                 } else {
-                    addLog('error', `❌ ERRO ao continuar fluxo - Lead: ${normalizedPhone} | Erro: ${sendResult.error}`);
-                    console.log('❌ ERRO ao enviar continuação para N8N:', sendResult.error);
+                    addLog('error', `❌ ERRO ao reativar fluxo - Lead: ${normalizedPhone} | Erro: ${sendResult.error}`);
+                    console.log('❌ ERRO ao enviar reativação para N8N:', sendResult.error);
                 }
             } else {
                 addLog('info', `⚠️ Resposta sem compra - Tel: ${normalizedPhone}`);
@@ -234,7 +249,8 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             normalizedPhone: phone ? normalizePhone(phone) : null,
             hasMessage: !!message,
             totalResponses: leadResponses.size,
-            totalPurchases: leadPurchases.size
+            totalPurchases: leadPurchases.size,
+            sessionFound: phone ? leadPurchases.has(normalizePhone(phone)) : false
         });
         
     } catch (error) {
@@ -313,7 +329,7 @@ app.post('/webhook/perfect', async (req, res) => {
         } else if (status === 'pending') {
             addLog('info', 'PIX GERADO - ' + orderCode + ' | Tel: ' + customerPhone);
             
-            // Registrar compra para monitoramento de resposta
+            // ✨ MELHORADO: Registrar compra para monitoramento de resposta
             if (customerPhone && customerPhone.length >= 10) {
                 leadPurchases.set(customerPhone, {
                     timestamp: Date.now(),
@@ -321,11 +337,12 @@ app.post('/webhook/perfect', async (req, res) => {
                     orderCode: orderCode,
                     customerName: customerName,
                     amount: amount,
-                    phone: customerPhone
+                    phone: customerPhone,
+                    sessionId: orderCode + '_' + Date.now() // ID único da sessão
                 });
                 
-                addLog('info', 'COMPRA REGISTRADA para monitoramento - Tel: ' + customerPhone + ' | Pedido: ' + orderCode);
-                console.log('📝 Lead adicionado para monitoramento:', customerPhone);
+                addLog('info', 'SESSÃO CRIADA para monitoramento - Tel: ' + customerPhone + ' | Pedido: ' + orderCode);
+                console.log('📝 Sessão de lead criada:', customerPhone);
             }
             
             if (pendingPixOrders.has(orderCode)) {
@@ -462,7 +479,7 @@ app.get('/debug', (req, res) => {
         stats: {
             total_webhooks: systemLogs.filter(l => l.type === 'webhook_received').length,
             responses_detected: systemLogs.filter(l => l.message.includes('RESPOSTA DETECTADA')).length,
-            continuations_sent: systemLogs.filter(l => l.message.includes('FLUXO CONTINUADO')).length,
+            continuations_sent: systemLogs.filter(l => l.message.includes('FLUXO REATIVADO')).length,
             errors: systemLogs.filter(l => l.type === 'error').length
         },
         
@@ -560,7 +577,7 @@ app.get('/', (req, res) => {
     const htmlContent = '<!DOCTYPE html>' +
         '<html>' +
         '<head>' +
-        '<title>Webhook Vendas v2.1 - Debug Total</title>' +
+        '<title>Webhook Vendas v2.1 - DEBUG TOTAL</title>' +
         '<meta charset="utf-8">' +
         '<style>' +
         'body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }' +
