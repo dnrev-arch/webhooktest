@@ -84,173 +84,157 @@ function cleanOldLeads() {
 
 setInterval(cleanOldLeads, 60 * 60 * 1000);
 
-// WEBHOOK WHATSAPP - VERSÃO CORRIGIDA PARA MÚLTIPLOS FORMATOS
+// WEBHOOK WHATSAPP - VERSÃO DEBUG TOTAL PARA CAPTURAR TUDO
 app.post('/webhook/whatsapp-response', async (req, res) => {
     try {
-        console.log('\n🔍 === DEBUG WHATSAPP WEBHOOK ===');
+        console.log('\n🔍 === WEBHOOK WHATSAPP DEBUG TOTAL ===');
         console.log('Body completo:', JSON.stringify(req.body, null, 2));
         
         const data = req.body;
         
-        // CORREÇÃO: Extrair dados de múltiplos formatos da Evolution
-        let phoneData = null;
-        let messageData = null;
+        // REGISTRAR TUDO que chega - para debug
+        addLog('info', '📱 WEBHOOK WHATSAPP RECEBIDO: ' + JSON.stringify(data).substring(0, 200) + '...');
         
-        // FORMATO 1: Direto no data (como teste manual)
-        if (data.data && data.data.key) {
-            phoneData = data.data.key;
-            messageData = data.data.message;
-            console.log('📱 Formato 1 detectado (data.key)');
-        }
+        // FORÇAR detecção de QUALQUER telefone válido
+        let phone = null;
+        let message = null;
         
-        // FORMATO 2: Dentro de messages array (Evolution comum)
-        else if (data.data && data.data.messages && data.data.messages.length > 0) {
-            phoneData = data.data.messages[0].key;
-            messageData = data.data.messages[0].message;
-            console.log('📱 Formato 2 detectado (data.messages[0])');
-        }
+        // Tentar TODAS as formas possíveis de extrair telefone
+        const phoneAttempts = [
+            data.key?.remoteJid,
+            data.data?.key?.remoteJid,
+            data.data?.messages?.[0]?.key?.remoteJid,
+            data.instance?.remoteJid,
+            data.phone,
+            data.from,
+            data.number
+        ];
         
-        // FORMATO 3: Direto no root (algumas versões Evolution)
-        else if (data.key) {
-            phoneData = data.key;
-            messageData = data.message;
-            console.log('📱 Formato 3 detectado (root.key)');
-        }
-        
-        // FORMATO 4: Outros formatos possíveis
-        else {
-            console.log('⚠️ Formato não reconhecido, tentando extrair manualmente...');
-            
-            // Tentar encontrar remoteJid em qualquer lugar
-            const phoneOptions = [
-                data.key?.remoteJid,
-                data.data?.key?.remoteJid,
-                data.data?.messages?.[0]?.key?.remoteJid,
-                data.phone,
-                data.from,
-                data.number
-            ];
-            
-            const messageOptions = [
-                data.message?.conversation,
-                data.data?.message?.conversation,
-                data.data?.messages?.[0]?.message?.conversation,
-                data.text,
-                data.body
-            ];
-            
-            const rawPhone = phoneOptions.find(p => p);
-            const message = messageOptions.find(m => m);
-            
-            if (rawPhone && message) {
-                phoneData = { remoteJid: rawPhone, fromMe: false };
-                messageData = { conversation: message };
-                console.log('📱 Formato manual extraído');
+        for (const attempt of phoneAttempts) {
+            if (attempt && typeof attempt === 'string' && attempt.includes('@')) {
+                phone = attempt.replace('@s.whatsapp.net', '').replace('@c.us', '');
+                console.log('✅ Telefone encontrado:', phone, 'via:', attempt);
+                addLog('info', '📱 Telefone detectado: ' + phone + ' via: ' + attempt);
+                break;
             }
         }
         
-        if (!phoneData || !messageData) {
-            console.log('❌ Não foi possível extrair telefone ou mensagem');
-            console.log('Estrutura recebida:', Object.keys(data));
-            return res.status(200).json({ success: true, message: 'Dados insuficientes' });
+        // Tentar TODAS as formas possíveis de extrair mensagem
+        const messageAttempts = [
+            data.message?.conversation,
+            data.data?.message?.conversation,
+            data.data?.messages?.[0]?.message?.conversation,
+            data.data?.messages?.[0]?.message?.extendedTextMessage?.text,
+            data.text,
+            data.body,
+            data.content
+        ];
+        
+        for (const attempt of messageAttempts) {
+            if (attempt && typeof attempt === 'string' && attempt.trim()) {
+                message = attempt.trim();
+                console.log('✅ Mensagem encontrada:', message.substring(0, 50) + '...');
+                addLog('info', '💬 Mensagem detectada: ' + message.substring(0, 50) + '...');
+                break;
+            }
         }
         
-        // Extrair telefone
-        const rawPhone = phoneData.remoteJid?.replace('@s.whatsapp.net', '').replace('@c.us', '');
-        const phone = normalizePhone(rawPhone);
-        
-        // Extrair mensagem
-        const message = messageData.conversation || messageData.extendedTextMessage?.text || '';
-        
-        // Verificar se não é mensagem do bot
-        const isFromBot = phoneData.fromMe;
-        
-        console.log('📱 Dados extraídos:', {
-            raw: rawPhone,
-            normalized: phone,
-            message: message,
-            fromBot: isFromBot
-        });
-        
-        if (!phone || !message) {
-            console.log('❌ Mensagem inválida ou do bot');
-            return res.status(200).json({ success: true, message: 'Mensagem inválida' });
-        }
-        
-        console.log('✅ MENSAGEM VÁLIDA DE LEAD DETECTADA!');
-        
-        // Registrar resposta
-        leadResponses.set(phone, {
-            timestamp: Date.now(),
-            message: message,
+        // DEBUG: Log do que foi encontrado
+        console.log('📱 Resultado extração:', {
             phone: phone,
-            full_data: data
+            message: message ? message.substring(0, 50) + '...' : null,
+            hasPhone: !!phone,
+            hasMessage: !!message
         });
         
-        addLog('info', 'LEAD RESPONDEU - Tel: ' + phone + ' | Msg: ' + message.substring(0, 50) + '...', {
-            phone: phone,
-            message: message
-        });
-        
-        console.log('📝 Resposta registrada para:', phone);
-        console.log('📊 Total de respostas registradas:', leadResponses.size);
-        
-        // Verificar se existe compra para este telefone
-        const hasPurchase = leadPurchases.has(phone);
-        console.log('🛒 Tem compra registrada?', hasPurchase);
-        console.log('📋 Compras registradas:', Array.from(leadPurchases.keys()));
-        
-        if (hasPurchase) {
-            const purchaseData = leadPurchases.get(phone);
-            console.log('🛒 Dados da compra encontrada:', purchaseData);
+        // SE encontrou telefone E mensagem, processar
+        if (phone && message) {
+            const normalizedPhone = normalizePhone(phone);
             
-            addLog('success', 'LEAD ATIVO - Tel: ' + phone + ' | Pedido: ' + purchaseData.orderCode);
+            console.log('🎯 PROCESSANDO RESPOSTA:', {
+                raw: phone,
+                normalized: normalizedPhone,
+                message: message.substring(0, 50) + '...'
+            });
             
-            const continuationPayload = {
-                ...purchaseData.originalData,
-                lead_interaction: {
-                    responded: true,
-                    response_message: message,
-                    response_time: new Date().toISOString(),
-                    phone: phone,
-                    customer_name: purchaseData.customerName
-                },
-                event_type: 'lead_active_continuation',
-                processed_at: new Date().toISOString(),
-                system_info: {
-                    source: 'perfect-webhook-system-v2',
-                    version: '2.1'
+            // Registrar resposta SEMPRE (independente de ter compra)
+            leadResponses.set(normalizedPhone, {
+                timestamp: Date.now(),
+                message: message,
+                phone: normalizedPhone,
+                full_data: data
+            });
+            
+            addLog('info', `🎉 RESPOSTA DETECTADA - Tel: ${normalizedPhone} | Msg: ${message.substring(0, 50)}...`, {
+                phone: normalizedPhone,
+                message: message
+            });
+            
+            console.log('📊 Total respostas registradas:', leadResponses.size);
+            
+            // Verificar se existe compra para este telefone
+            const hasPurchase = leadPurchases.has(normalizedPhone);
+            console.log('🛒 Tem compra registrada?', hasPurchase);
+            console.log('📋 Compras registradas:', Array.from(leadPurchases.keys()));
+            
+            if (hasPurchase) {
+                const purchaseData = leadPurchases.get(normalizedPhone);
+                console.log('🛒 Dados da compra encontrada:', purchaseData);
+                
+                addLog('success', `🚀 LEAD ATIVO DETECTADO - Tel: ${normalizedPhone} | Pedido: ${purchaseData.orderCode}`);
+                
+                // Preparar dados para continuação do fluxo
+                const continuationPayload = {
+                    ...purchaseData.originalData,
+                    lead_interaction: {
+                        responded: true,
+                        response_message: message,
+                        response_time: new Date().toISOString(),
+                        phone: normalizedPhone,
+                        customer_name: purchaseData.customerName
+                    },
+                    event_type: 'lead_active_continuation',
+                    processed_at: new Date().toISOString(),
+                    system_info: {
+                        source: 'perfect-webhook-system-v2',
+                        version: '2.1'
+                    }
+                };
+                
+                console.log('📤 Enviando continuação para N8N:', JSON.stringify(continuationPayload, null, 2));
+                
+                const sendResult = await sendToN8N(continuationPayload, 'lead_active_continuation');
+                
+                if (sendResult.success) {
+                    addLog('success', `✅ FLUXO CONTINUADO COM SUCESSO - Lead: ${normalizedPhone} | Pedido: ${purchaseData.orderCode}`);
+                    console.log('🎯 FLUXO CONTINUADO COM SUCESSO!');
+                } else {
+                    addLog('error', `❌ ERRO ao continuar fluxo - Lead: ${normalizedPhone} | Erro: ${sendResult.error}`);
+                    console.log('❌ ERRO ao enviar continuação para N8N:', sendResult.error);
                 }
-            };
-            
-            console.log('📤 Enviando continuação para N8N:', JSON.stringify(continuationPayload, null, 2));
-            
-            const sendResult = await sendToN8N(continuationPayload, 'lead_active_continuation');
-            
-            if (sendResult.success) {
-                addLog('success', 'FLUXO CONTINUADO - Lead: ' + phone + ' | Pedido: ' + purchaseData.orderCode);
-                leadPurchases.delete(phone);
-                leadResponses.delete(phone);
-                console.log('🎯 FLUXO CONTINUADO COM SUCESSO!');
             } else {
-                addLog('error', 'ERRO ao continuar fluxo - Lead: ' + phone);
-                console.log('❌ ERRO ao enviar continuação para N8N:', sendResult.error);
+                addLog('info', `⚠️ Resposta sem compra - Tel: ${normalizedPhone}`);
+                console.log('⚠️ Lead respondeu mas não tem compra registrada');
             }
         } else {
-            addLog('info', 'Resposta registrada (sem compra) - Tel: ' + phone);
-            console.log('⚠️ Lead respondeu mas não tem compra registrada');
+            console.log('❌ Não foi possível extrair telefone ou mensagem');
+            addLog('info', '❌ Webhook WhatsApp: dados insuficientes para processar');
+            
+            // DEBUG: Mostrar estrutura recebida quando falha
+            console.log('📊 Estrutura de dados recebida:', Object.keys(data));
+            addLog('info', '📊 Estrutura recebida: ' + Object.keys(data).join(', '));
         }
         
         console.log('=== FIM DEBUG WHATSAPP ===\n');
         
         res.status(200).json({ 
             success: true, 
-            message: 'Resposta WhatsApp processada',
+            message: 'Webhook WhatsApp processado',
             phone: phone,
-            hasPurchase: hasPurchase,
+            normalizedPhone: phone ? normalizePhone(phone) : null,
+            hasMessage: !!message,
             totalResponses: leadResponses.size,
-            totalPurchases: leadPurchases.size,
-            format_detected: phoneData && messageData ? 'valid' : 'invalid'
+            totalPurchases: leadPurchases.size
         });
         
     } catch (error) {
@@ -477,7 +461,7 @@ app.get('/debug', (req, res) => {
         
         stats: {
             total_webhooks: systemLogs.filter(l => l.type === 'webhook_received').length,
-            responses_detected: systemLogs.filter(l => l.message.includes('LEAD RESPONDEU')).length,
+            responses_detected: systemLogs.filter(l => l.message.includes('RESPOSTA DETECTADA')).length,
             continuations_sent: systemLogs.filter(l => l.message.includes('FLUXO CONTINUADO')).length,
             errors: systemLogs.filter(l => l.type === 'error').length
         },
@@ -576,13 +560,14 @@ app.get('/', (req, res) => {
     const htmlContent = '<!DOCTYPE html>' +
         '<html>' +
         '<head>' +
-        '<title>Webhook Vendas v2.1</title>' +
+        '<title>Webhook Vendas v2.1 - Debug Total</title>' +
         '<meta charset="utf-8">' +
         '<style>' +
         'body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }' +
         '.container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }' +
         'h1 { color: #333; text-align: center; }' +
         '.status { background: #4CAF50; color: white; padding: 15px; border-radius: 5px; margin: 20px 0; text-align: center; }' +
+        '.debug-status { background: #ff9800; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; text-align: center; font-size: 14px; }' +
         '.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }' +
         '.stat-card { background: #f8f9fa; padding: 20px; border-radius: 5px; text-align: center; border-left: 4px solid #007bff; }' +
         '.stat-value { font-size: 2em; font-weight: bold; color: #007bff; }' +
@@ -598,9 +583,12 @@ app.get('/', (req, res) => {
         '</head>' +
         '<body>' +
         '<div class="container">' +
-        '<h1>🚀 Webhook Vendas v2.1</h1>' +
+        '<h1>🚀 Webhook Vendas v2.1 - DEBUG TOTAL</h1>' +
         '<div class="status">' +
         '<strong>Sistema Online</strong> - Monitorando vendas e respostas WhatsApp' +
+        '</div>' +
+        '<div class="debug-status">' +
+        '<strong>🔍 MODO DEBUG ATIVO</strong> - Capturando TODOS os formatos da Evolution API' +
         '</div>' +
         '<div class="stats">' +
         '<div class="stat-card">' +
@@ -674,38 +662,3 @@ app.get('/', (req, res) => {
         'console.log("Debug completo:", data);' +
         '});' +
         '}' +
-        'function saveUrl() {' +
-        'const url = document.getElementById("n8n-url").value;' +
-        'fetch("/config/n8n-url", {' +
-        'method: "POST",' +
-        'headers: {"Content-Type": "application/json"},' +
-        'body: JSON.stringify({url: url})' +
-        '})' +
-        '.then(r => r.json())' +
-        '.then(data => {' +
-        'alert(data.message);' +
-        'refreshStatus();' +
-        '});' +
-        '}' +
-        'setInterval(refreshStatus, 10000);' +
-        'refreshStatus();' +
-        '</script>' +
-        '</body>' +
-        '</html>';
-    
-    res.send(htmlContent);
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    addLog('info', 'Sistema v2.1 iniciado na porta ' + PORT);
-    addLog('info', 'Perfect: /webhook/perfect');
-    addLog('info', 'WhatsApp: /webhook/whatsapp-response');
-    addLog('info', 'Debug: /debug');
-    addLog('info', 'Interface: /');
-    console.log('🚀 Servidor rodando na porta ' + PORT);
-    console.log('📱 Webhook WhatsApp: /webhook/whatsapp-response');
-    console.log('💰 Webhook Perfect Pay: /webhook/perfect');
-    console.log('🔍 Debug completo: /debug');
-    console.log('📊 Interface: /');
-});
