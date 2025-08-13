@@ -21,7 +21,12 @@ function normalizePhone(phone) {
     // Remove todos os caracteres não numéricos
     let normalized = phone.toString().replace(/\D/g, '');
     
-    console.log('📱 Normalizando telefone:', {
+    console.log('🚀 Servidor rodando na porta ' + PORT);
+    console.log('📱 Webhook WhatsApp: /webhook/whatsapp-response');
+    console.log('💰 Webhook Perfect Pay: /webhook/perfect');
+    console.log('🔍 Debug completo: /debug');
+    console.log('📊 Interface: /');
+});.log('📱 Normalizando telefone:', {
         original: phone,
         apenas_numeros: normalized
     });
@@ -84,10 +89,10 @@ function cleanOldLeads() {
 
 setInterval(cleanOldLeads, 60 * 60 * 1000);
 
-// WEBHOOK WHATSAPP - VERSÃO CORRIGIDA PARA N8N
+// WEBHOOK WHATSAPP - VERSÃO DEBUG TOTAL PARA CAPTURAR TUDO
 app.post('/webhook/whatsapp-response', async (req, res) => {
     try {
-        console.log('\n🔍 === WEBHOOK WHATSAPP RESPOSTA ===');
+        console.log('\n🔍 === WEBHOOK WHATSAPP DEBUG TOTAL ===');
         console.log('Body completo:', JSON.stringify(req.body, null, 2));
         
         const data = req.body;
@@ -95,8 +100,11 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
         // REGISTRAR TUDO que chega - para debug
         addLog('info', '📱 WEBHOOK WHATSAPP RECEBIDO: ' + JSON.stringify(data).substring(0, 200) + '...');
         
-        // Extrair telefone
+        // FORÇAR detecção de QUALQUER telefone válido
         let phone = null;
+        let message = null;
+        
+        // Tentar TODAS as formas possíveis de extrair telefone
         const phoneAttempts = [
             data.key?.remoteJid,
             data.data?.key?.remoteJid,
@@ -116,8 +124,7 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             }
         }
         
-        // Extrair mensagem
-        let message = null;
+        // Tentar TODAS as formas possíveis de extrair mensagem
         const messageAttempts = [
             data.message?.conversation,
             data.data?.message?.conversation,
@@ -181,26 +188,9 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
                 
                 addLog('success', `🚀 LEAD ATIVO DETECTADO - Tel: ${normalizedPhone} | Pedido: ${purchaseData.orderCode}`);
                 
-                // ✨ NOVA VERSÃO: Preparar dados para continuação do fluxo N8N
-                const reactivationPayload = {
-                    event_type: 'lead_active_continuation', // 🔑 CHAVE PARA O N8N
-                    customer_response: {
-                        message: message,
-                        phone: normalizedPhone,
-                        response_time: new Date().toISOString(),
-                        session_id: purchaseData.orderCode
-                    },
-                    original_order: {
-                        code: purchaseData.orderCode,
-                        customer_name: purchaseData.customerName,
-                        amount: purchaseData.amount,
-                        phone: normalizedPhone,
-                        plan: {
-                            code: purchaseData.originalData?.plan?.code || 'PPLQOMOVD'
-                        }
-                    },
-                    session_data: purchaseData,
-                    // Manter compatibilidade com versão anterior
+                // Preparar dados para continuação do fluxo
+                const continuationPayload = {
+                    ...purchaseData.originalData,
                     lead_interaction: {
                         responded: true,
                         response_message: message,
@@ -208,24 +198,24 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
                         phone: normalizedPhone,
                         customer_name: purchaseData.customerName
                     },
+                    event_type: 'lead_active_continuation',
                     processed_at: new Date().toISOString(),
                     system_info: {
                         source: 'perfect-webhook-system-v2',
-                        version: '2.1',
-                        action: 'flow_reactivation'
+                        version: '2.1'
                     }
                 };
                 
-                console.log('📤 ENVIANDO REATIVAÇÃO PARA N8N:', JSON.stringify(reactivationPayload, null, 2));
+                console.log('📤 Enviando continuação para N8N:', JSON.stringify(continuationPayload, null, 2));
                 
-                const sendResult = await sendToN8N(reactivationPayload, 'lead_active_continuation');
+                const sendResult = await sendToN8N(continuationPayload, 'lead_active_continuation');
                 
                 if (sendResult.success) {
-                    addLog('success', `✅ FLUXO REATIVADO COM SUCESSO - Lead: ${normalizedPhone} | Pedido: ${purchaseData.orderCode}`);
-                    console.log('🎯 FLUXO REATIVADO COM SUCESSO!');
+                    addLog('success', `✅ FLUXO CONTINUADO COM SUCESSO - Lead: ${normalizedPhone} | Pedido: ${purchaseData.orderCode}`);
+                    console.log('🎯 FLUXO CONTINUADO COM SUCESSO!');
                 } else {
-                    addLog('error', `❌ ERRO ao reativar fluxo - Lead: ${normalizedPhone} | Erro: ${sendResult.error}`);
-                    console.log('❌ ERRO ao enviar reativação para N8N:', sendResult.error);
+                    addLog('error', `❌ ERRO ao continuar fluxo - Lead: ${normalizedPhone} | Erro: ${sendResult.error}`);
+                    console.log('❌ ERRO ao enviar continuação para N8N:', sendResult.error);
                 }
             } else {
                 addLog('info', `⚠️ Resposta sem compra - Tel: ${normalizedPhone}`);
@@ -249,8 +239,7 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             normalizedPhone: phone ? normalizePhone(phone) : null,
             hasMessage: !!message,
             totalResponses: leadResponses.size,
-            totalPurchases: leadPurchases.size,
-            sessionFound: phone ? leadPurchases.has(normalizePhone(phone)) : false
+            totalPurchases: leadPurchases.size
         });
         
     } catch (error) {
@@ -260,7 +249,7 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
     }
 });
 
-// Webhook Perfect Pay - VERSÃO CORRIGIDA COM ENVIO PARA N8N
+// Webhook Perfect Pay - VERSÃO MELHORADA COM CORREÇÃO
 app.post('/webhook/perfect', async (req, res) => {
     try {
         console.log('\n💰 === DEBUG PERFECT PAY ===');
@@ -329,7 +318,7 @@ app.post('/webhook/perfect', async (req, res) => {
         } else if (status === 'pending') {
             addLog('info', 'PIX GERADO - ' + orderCode + ' | Tel: ' + customerPhone);
             
-            // ✨ MELHORADO: Registrar compra para monitoramento de resposta
+            // Registrar compra para monitoramento de resposta
             if (customerPhone && customerPhone.length >= 10) {
                 leadPurchases.set(customerPhone, {
                     timestamp: Date.now(),
@@ -337,26 +326,22 @@ app.post('/webhook/perfect', async (req, res) => {
                     orderCode: orderCode,
                     customerName: customerName,
                     amount: amount,
-                    phone: customerPhone,
-                    sessionId: orderCode + '_' + Date.now() // ID único da sessão
+                    phone: customerPhone
                 });
                 
-                addLog('info', 'SESSÃO CRIADA para monitoramento - Tel: ' + customerPhone + ' | Pedido: ' + orderCode);
-                console.log('📝 Sessão de lead criada:', customerPhone);
+                addLog('info', 'COMPRA REGISTRADA para monitoramento - Tel: ' + customerPhone + ' | Pedido: ' + orderCode);
+                console.log('📝 Lead adicionado para monitoramento:', customerPhone);
             }
             
-            // 🔥 CORREÇÃO CRUCIAL: Enviar PIX GERADO para N8N
+            // 🔥 CORREÇÃO: Enviar PIX GERADO para N8N
             const sendResult = await sendToN8N(data, 'pending');
             
             if (sendResult.success) {
                 addLog('success', 'PIX GERADO enviado para N8N - ' + orderCode);
-                console.log('✅ PIX GERADO enviado para N8N com sucesso!');
             } else {
                 addLog('error', 'ERRO enviar PIX GERADO - ' + orderCode);
-                console.log('❌ ERRO ao enviar PIX GERADO para N8N:', sendResult.error);
             }
             
-            // Configurar timeout do PIX
             if (pendingPixOrders.has(orderCode)) {
                 clearTimeout(pendingPixOrders.get(orderCode).timeout);
             }
@@ -365,9 +350,9 @@ app.post('/webhook/perfect', async (req, res) => {
                 addLog('timeout', 'TIMEOUT PIX - ' + orderCode);
                 pendingPixOrders.delete(orderCode);
                 
-                const timeoutResult = await sendToN8N(data, 'pix_timeout');
+                const sendResult = await sendToN8N(data, 'pix_timeout');
                 
-                if (timeoutResult.success) {
+                if (sendResult.success) {
                     addLog('success', 'PIX TIMEOUT enviado - ' + orderCode);
                 } else {
                     addLog('error', 'ERRO PIX TIMEOUT - ' + orderCode);
@@ -491,7 +476,7 @@ app.get('/debug', (req, res) => {
         stats: {
             total_webhooks: systemLogs.filter(l => l.type === 'webhook_received').length,
             responses_detected: systemLogs.filter(l => l.message.includes('RESPOSTA DETECTADA')).length,
-            continuations_sent: systemLogs.filter(l => l.message.includes('FLUXO REATIVADO')).length,
+            continuations_sent: systemLogs.filter(l => l.message.includes('FLUXO CONTINUADO')).length,
             errors: systemLogs.filter(l => l.type === 'error').length
         },
         
@@ -584,75 +569,94 @@ app.get('/health', (req, res) => {
     });
 });
 
-// Interface visual restaurada (sem HTML complexo que causa erro)
+// Interface atualizada com debug
 app.get('/', (req, res) => {
-    res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Webhook Vendas v2.1 - CORRIGIDO</title>
-    <meta charset="utf-8">
-    <style>
-        body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
-        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }
-        h1 { color: #333; text-align: center; }
-        .status { background: #4CAF50; color: white; padding: 15px; border-radius: 5px; margin: 20px 0; text-align: center; }
-        .debug-status { background: #ff9800; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; text-align: center; font-size: 14px; }
-        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
-        .stat-card { background: #f8f9fa; padding: 20px; border-radius: 5px; text-align: center; border-left: 4px solid #007bff; }
-        .stat-value { font-size: 2em; font-weight: bold; color: #007bff; }
-        .stat-label { color: #666; font-size: 0.9em; }
-        .btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px; }
-        .btn:hover { background: #0056b3; }
-        .config { background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🚀 Webhook Vendas v2.1 - CORRIGIDO</h1>
-        <div class="status">
-            <strong>Sistema Online</strong> - Monitorando vendas e respostas WhatsApp
-        </div>
-        <div class="debug-status">
-            <strong>✅ CORREÇÃO APLICADA</strong> - Agora enviando para N8N corretamente!
-        </div>
-        <div class="stats">
-            <div class="stat-card">
-                <div class="stat-value" id="pending-count">${pendingPixOrders.size}</div>
-                <div class="stat-label">PIX Pendentes</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="leads-responded">${leadResponses.size}</div>
-                <div class="stat-label">Leads Responderam</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="leads-waiting">${leadPurchases.size}</div>
-                <div class="stat-label">Aguardando Resposta</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="total-received">${systemLogs.filter(l => l.type === 'webhook_received').length}</div>
-                <div class="stat-label">Total Recebidos</div>
-            </div>
-        </div>
-        <div style="text-align: center; margin: 20px 0;">
-            <button class="btn" onclick="window.location.reload()">🔄 Atualizar</button>
-            <button class="btn" onclick="window.location.href='/debug'">🔍 Debug</button>
-            <button class="btn" onclick="window.location.href='/status'">📊 Status</button>
-        </div>
-        <div class="config">
-            <h3>⚙️ URL N8N Configurada</h3>
-            <p><strong>URL:</strong> ${N8N_WEBHOOK_URL}</p>
-        </div>
-        <div class="config">
-            <h3>📍 Endpoints Disponíveis</h3>
-            <p><strong>Perfect Pay:</strong> /webhook/perfect</p>
-            <p><strong>WhatsApp:</strong> /webhook/whatsapp-response</p>
-            <p><strong>Debug:</strong> /debug</p>
-        </div>
-    </div>
-</body>
-</html>
-    `);
+    const htmlContent = '<!DOCTYPE html>' +
+        '<html>' +
+        '<head>' +
+        '<title>Webhook Vendas v2.1 - DEBUG TOTAL</title>' +
+        '<meta charset="utf-8">' +
+        '<style>' +
+        'body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }' +
+        '.container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }' +
+        'h1 { color: #333; text-align: center; }' +
+        '.status { background: #4CAF50; color: white; padding: 15px; border-radius: 5px; margin: 20px 0; text-align: center; }' +
+        '.debug-status { background: #ff9800; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; text-align: center; font-size: 14px; }' +
+        '.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }' +
+        '.stat-card { background: #f8f9fa; padding: 20px; border-radius: 5px; text-align: center; border-left: 4px solid #007bff; }' +
+        '.stat-value { font-size: 2em; font-weight: bold; color: #007bff; }' +
+        '.stat-label { color: #666; font-size: 0.9em; }' +
+        '.btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px; }' +
+        '.btn:hover { background: #0056b3; }' +
+        '.btn-debug { background: #dc3545; }' +
+        '.btn-debug:hover { background: #c82333; }' +
+        '.config { background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0; }' +
+        '.input-group { display: flex; gap: 10px; margin: 10px 0; }' +
+        '.form-input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }' +
+        '</style>' +
+        '</head>' +
+        '<body>' +
+        '<div class="container">' +
+        '<h1>🚀 Webhook Vendas v2.1 - DEBUG TOTAL</h1>' +
+        '<div class="status">' +
+        '<strong>Sistema Online</strong> - Monitorando vendas e respostas WhatsApp' +
+        '</div>' +
+        '<div class="debug-status">' +
+        '<strong>🔍 MODO DEBUG ATIVO</strong> - Capturando TODOS os formatos da Evolution API' +
+        '</div>' +
+        '<div class="stats">' +
+        '<div class="stat-card">' +
+        '<div class="stat-value" id="pending-count">' + pendingPixOrders.size + '</div>' +
+        '<div class="stat-label">PIX Pendentes</div>' +
+        '</div>' +
+        '<div class="stat-card">' +
+        '<div class="stat-value" id="leads-responded">' + leadResponses.size + '</div>' +
+        '<div class="stat-label">Leads Responderam</div>' +
+        '</div>' +
+        '<div class="stat-card">' +
+        '<div class="stat-value" id="leads-waiting">' + leadPurchases.size + '</div>' +
+        '<div class="stat-label">Aguardando Resposta</div>' +
+        '</div>' +
+        '<div class="stat-card">' +
+        '<div class="stat-value" id="total-received">' + systemLogs.filter(l => l.type === 'webhook_received').length + '</div>' +
+        '<div class="stat-label">Total Recebidos</div>' +
+        '</div>' +
+        '</div>' +
+        '<div style="text-align: center; margin: 20px 0;">' +
+        '<button class="btn" onclick="refreshStatus()">🔄 Atualizar</button>' +
+        '<button class="btn" onclick="viewLeads()">👥 Ver Leads</button>' +
+        '<button class="btn btn-debug" onclick="viewDebug()">🔍 Debug Completo</button>' +
+        '</div>' +
+        '<div class="config">' +
+        '<h3>⚙️ Configuração N8N</h3>' +
+        '<div class="input-group">' +
+        '<input type="text" class="form-input" id="n8n-url" placeholder="URL do N8N webhook..." value="' + N8N_WEBHOOK_URL + '" />' +
+        '<button class="btn" onclick="saveUrl()">💾 Salvar</button>' +
+        '</div>' +
+        '</div>' +
+        '<div class="config">' +
+        '<h3>📍 Endpoints Disponíveis</h3>' +
+        '<p><strong>Perfect Pay:</strong> /webhook/perfect</p>' +
+        '<p><strong>WhatsApp:</strong> /webhook/whatsapp-response</p>' +
+        '<p><strong>Debug:</strong> /debug</p>' +
+        '</div>' +
+        '</div>' +
+        '<script>' +
+        'function refreshStatus() { location.reload(); }' +
+        'function viewLeads() { window.open("/leads-status", "_blank"); }' +
+        'function viewDebug() { window.open("/debug", "_blank"); }' +
+        'function saveUrl() {' +
+        'const url = document.getElementById("n8n-url").value;' +
+        'fetch("/config/n8n-url", {' +
+        'method: "POST",' +
+        'headers: {"Content-Type": "application/json"},' +
+        'body: JSON.stringify({url: url})' +
+        '}).then(() => alert("URL salva!")); }' +
+        '</script>' +
+        '</body>' +
+        '</html>';
+    
+    res.send(htmlContent);
 });
 
 const PORT = process.env.PORT || 3000;
@@ -662,9 +666,4 @@ app.listen(PORT, () => {
     addLog('info', 'WhatsApp: /webhook/whatsapp-response');
     addLog('info', 'Debug: /debug');
     addLog('info', 'Interface: /');
-    console.log('🚀 Servidor rodando na porta ' + PORT);
-    console.log('📱 Webhook WhatsApp: /webhook/whatsapp-response');
-    console.log('💰 Webhook Perfect Pay: /webhook/perfect');
-    console.log('🔍 Debug completo: /debug');
-    console.log('📊 Interface: /');
-});
+    console
