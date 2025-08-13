@@ -185,41 +185,42 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             
             console.log('📊 Total respostas registradas:', leadResponses.size);
             
-            // Verificar se existe compra para este telefone
             // SEMPRE continuar fluxo quando lead responder
-console.log('🎯 Lead respondeu - continuando fluxo automaticamente');
+            console.log('🎯 Lead respondeu - continuando fluxo automaticamente');
 
-// Preparar dados para continuação do fluxo
-const continuationPayload = {
-    lead_interaction: {
-        responded: true,
-        response_message: message,
-        response_time: new Date().toISOString(),
-        phone: normalizedPhone
-    },
-    event_type: 'lead_active_continuation',
-    processed_at: new Date().toISOString(),
-    system_info: {
-        source: 'perfect-webhook-system-v2',
-        version: '2.1'
-    }
-};
+            // Preparar dados para continuação do fluxo
+            const continuationPayload = {
+                lead_interaction: {
+                    responded: true,
+                    response_message: message,
+                    response_time: new Date().toISOString(),
+                    phone: normalizedPhone
+                },
+                event_type: 'lead_active_continuation',
+                processed_at: new Date().toISOString(),
+                system_info: {
+                    source: 'perfect-webhook-system-v2',
+                    version: '2.1'
+                }
+            };
 
-console.log('🚨 TESTE: VAI ENVIAR PARA WEBHOOK1!');
-console.log('🚨 URL WEBHOOK1:', N8N_WHATSAPP_URL);
-console.log('📤 Enviando continuação para N8N:', JSON.stringify(continuationPayload, null, 2));
+            console.log('🚨 TESTE: VAI ENVIAR PARA WEBHOOK1!');
+            console.log('🚨 URL WEBHOOK1:', N8N_WHATSAPP_URL);
+            console.log('📤 Enviando continuação para N8N:', JSON.stringify(continuationPayload, null, 2));
 
-const sendResult = await sendToN8N(continuationPayload, 'lead_active_continuation', true);
+            const sendResult = await sendToN8N(continuationPayload, 'lead_active_continuation', true);
 
-if (sendResult.success) {
-    addLog('success', `✅ FLUXO CONTINUADO COM SUCESSO - Lead: ${normalizedPhone}`);
-    console.log('🎯 FLUXO CONTINUADO COM SUCESSO!');
-} else {
-    addLog('error', `❌ ERRO ao continuar fluxo - Lead: ${normalizedPhone} | Erro: ${sendResult.error}`);
-    console.log('❌ ERRO ao enviar continuação para N8N:', sendResult.error);
-}
+            if (sendResult.success) {
+                addLog('success', `✅ FLUXO CONTINUADO COM SUCESSO - Lead: ${normalizedPhone}`);
+                console.log('🎯 FLUXO CONTINUADO COM SUCESSO!');
+            } else {
+                addLog('error', `❌ ERRO ao continuar fluxo - Lead: ${normalizedPhone} | Erro: ${sendResult.error}`);
+                console.log('❌ ERRO ao enviar continuação para N8N:', sendResult.error);
             }
-        
+        } else {
+            console.log('❌ Não foi possível extrair telefone ou mensagem');
+            addLog('info', '❌ Webhook WhatsApp: dados insuficientes para processar');
+            
             // DEBUG: Mostrar estrutura recebida quando falha
             console.log('📊 Estrutura de dados recebida:', Object.keys(data));
             addLog('info', '📊 Estrutura recebida: ' + Object.keys(data).join(', '));
@@ -316,6 +317,7 @@ app.post('/webhook/perfect', async (req, res) => {
             
             // Registrar compra para monitoramento de resposta
             if (customerPhone && customerPhone.length >= 10) {
+                console.log('🔍 TELEFONE SALVO PERFECT PAY:', customerPhone);
                 leadPurchases.set(customerPhone, {
                     timestamp: Date.now(),
                     originalData: data,
