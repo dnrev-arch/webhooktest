@@ -391,7 +391,7 @@ async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
         };
         
         console.log(`📤 Enviando para N8N - Tipo: ${eventType}`);
-        console.log('URL N8N:', N8N_WEBHOOK_URL);
+        console.log('URL N8N:', webhookUrl);
         
         addLog('info', 'Enviando para N8N - Tipo: ' + eventType);
         const webhookUrl = useWhatsAppWebhook ? N8N_WHATSAPP_URL : N8N_WEBHOOK_URL;
