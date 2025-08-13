@@ -328,6 +328,13 @@ app.post('/webhook/perfect', async (req, res) => {
                 addLog('info', 'COMPRA REGISTRADA para monitoramento - Tel: ' + customerPhone + ' | Pedido: ' + orderCode);
                 console.log('📝 Lead adicionado para monitoramento:', customerPhone);
             }
+            const sendResult = await sendToN8N(data, 'pending');
+        
+        if (sendResult.success) {
+            addLog('success', 'PIX PENDING enviado - ' + orderCode);
+        } else {
+            addLog('error', 'ERRO enviar PIX PENDING - ' + orderCode);
+        }
             
             if (pendingPixOrders.has(orderCode)) {
                 clearTimeout(pendingPixOrders.get(orderCode).timeout);
