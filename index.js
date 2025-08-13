@@ -21,12 +21,7 @@ function normalizePhone(phone) {
     // Remove todos os caracteres não numéricos
     let normalized = phone.toString().replace(/\D/g, '');
     
-    console.log('🚀 Servidor rodando na porta ' + PORT);
-    console.log('📱 Webhook WhatsApp: /webhook/whatsapp-response');
-    console.log('💰 Webhook Perfect Pay: /webhook/perfect');
-    console.log('🔍 Debug completo: /debug');
-    console.log('📊 Interface: /');
-});.log('📱 Normalizando telefone:', {
+    console.log('📱 Normalizando telefone:', {
         original: phone,
         apenas_numeros: normalized
     });
@@ -249,7 +244,7 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
     }
 });
 
-// Webhook Perfect Pay - VERSÃO MELHORADA COM CORREÇÃO
+// Webhook Perfect Pay - VERSÃO MELHORADA
 app.post('/webhook/perfect', async (req, res) => {
     try {
         console.log('\n💰 === DEBUG PERFECT PAY ===');
@@ -331,15 +326,6 @@ app.post('/webhook/perfect', async (req, res) => {
                 
                 addLog('info', 'COMPRA REGISTRADA para monitoramento - Tel: ' + customerPhone + ' | Pedido: ' + orderCode);
                 console.log('📝 Lead adicionado para monitoramento:', customerPhone);
-            }
-            
-            // 🔥 CORREÇÃO: Enviar PIX GERADO para N8N
-            const sendResult = await sendToN8N(data, 'pending');
-            
-            if (sendResult.success) {
-                addLog('success', 'PIX GERADO enviado para N8N - ' + orderCode);
-            } else {
-                addLog('error', 'ERRO enviar PIX GERADO - ' + orderCode);
             }
             
             if (pendingPixOrders.has(orderCode)) {
@@ -574,7 +560,7 @@ app.get('/', (req, res) => {
     const htmlContent = '<!DOCTYPE html>' +
         '<html>' +
         '<head>' +
-        '<title>Webhook Vendas v2.1 - DEBUG TOTAL</title>' +
+        '<title>Webhook Vendas v2.1 - Debug Total</title>' +
         '<meta charset="utf-8">' +
         '<style>' +
         'body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }' +
@@ -606,19 +592,19 @@ app.get('/', (req, res) => {
         '</div>' +
         '<div class="stats">' +
         '<div class="stat-card">' +
-        '<div class="stat-value" id="pending-count">' + pendingPixOrders.size + '</div>' +
+        '<div class="stat-value" id="pending-count">0</div>' +
         '<div class="stat-label">PIX Pendentes</div>' +
         '</div>' +
         '<div class="stat-card">' +
-        '<div class="stat-value" id="leads-responded">' + leadResponses.size + '</div>' +
+        '<div class="stat-value" id="leads-responded">0</div>' +
         '<div class="stat-label">Leads Responderam</div>' +
         '</div>' +
         '<div class="stat-card">' +
-        '<div class="stat-value" id="leads-waiting">' + leadPurchases.size + '</div>' +
+        '<div class="stat-value" id="leads-waiting">0</div>' +
         '<div class="stat-label">Aguardando Resposta</div>' +
         '</div>' +
         '<div class="stat-card">' +
-        '<div class="stat-value" id="total-received">' + systemLogs.filter(l => l.type === 'webhook_received').length + '</div>' +
+        '<div class="stat-value" id="total-received">0</div>' +
         '<div class="stat-label">Total Recebidos</div>' +
         '</div>' +
         '</div>' +
@@ -642,16 +628,55 @@ app.get('/', (req, res) => {
         '</div>' +
         '</div>' +
         '<script>' +
-        'function refreshStatus() { location.reload(); }' +
-        'function viewLeads() { window.open("/leads-status", "_blank"); }' +
-        'function viewDebug() { window.open("/debug", "_blank"); }' +
+        'function refreshStatus() {' +
+        'fetch("/status")' +
+        '.then(r => r.json())' +
+        '.then(data => {' +
+        'document.getElementById("pending-count").textContent = data.pending_pix_orders;' +
+        'document.getElementById("leads-responded").textContent = data.lead_interaction_stats.responded;' +
+        'document.getElementById("leads-waiting").textContent = data.lead_interaction_stats.waiting_response;' +
+        'document.getElementById("total-received").textContent = data.statistics.total_webhooks_received;' +
+        '});' +
+        '}' +
+        'function viewLeads() {' +
+        'fetch("/leads-status")' +
+        '.then(r => r.json())' +
+        '.then(data => {' +
+        'alert("Leads Responderam: " + data.leads_responded + "\\nAguardando: " + data.leads_waiting_response);' +
+        '});' +
+        '}' +
+        'function viewDebug() {' +
+        'fetch("/debug")' +
+        '.then(r => r.json())' +
+        '.then(data => {' +
+        'const info = "ESTADO ATUAL:\\n" +' +
+        '"- Respostas: " + data.leadResponses.count + "\\n" +' +
+        '"- Compras: " + data.leadPurchases.count + "\\n" +' +
+        '"- PIX Pendentes: " + data.pendingPixOrders.count + "\\n\\n" +' +
+        '"ESTATÍSTICAS:\\n" +' +
+        '"- Webhooks: " + data.stats.total_webhooks + "\\n" +' +
+        '"- Respostas detectadas: " + data.stats.responses_detected + "\\n" +' +
+        '"- Continuações enviadas: " + data.stats.continuations_sent + "\\n" +' +
+        '"- Erros: " + data.stats.errors;' +
+        'alert(info);' +
+        'console.log("Debug completo:", data);' +
+        '});' +
+        '}' +
         'function saveUrl() {' +
         'const url = document.getElementById("n8n-url").value;' +
         'fetch("/config/n8n-url", {' +
         'method: "POST",' +
         'headers: {"Content-Type": "application/json"},' +
         'body: JSON.stringify({url: url})' +
-        '}).then(() => alert("URL salva!")); }' +
+        '})' +
+        '.then(r => r.json())' +
+        '.then(data => {' +
+        'alert(data.message);' +
+        'refreshStatus();' +
+        '});' +
+        '}' +
+        'setInterval(refreshStatus, 10000);' +
+        'refreshStatus();' +
         '</script>' +
         '</body>' +
         '</html>';
@@ -666,4 +691,9 @@ app.listen(PORT, () => {
     addLog('info', 'WhatsApp: /webhook/whatsapp-response');
     addLog('info', 'Debug: /debug');
     addLog('info', 'Interface: /');
-    console
+    console.log('🚀 Servidor rodando na porta ' + PORT);
+    console.log('📱 Webhook WhatsApp: /webhook/whatsapp-response');
+    console.log('💰 Webhook Perfect Pay: /webhook/perfect');
+    console.log('🔍 Debug completo: /debug');
+    console.log('📊 Interface: /');
+});
