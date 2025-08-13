@@ -172,7 +172,7 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             fromBot: isFromBot
         });
         
-        if (!phone || !message || isFromBot) {
+        if (!phone || !message) {
             console.log('❌ Mensagem inválida ou do bot');
             return res.status(200).json({ success: true, message: 'Mensagem inválida' });
         }
