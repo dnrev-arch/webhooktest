@@ -305,6 +305,7 @@ app.post('/webhook/perfect', async (req, res) => {
             }
             
             if (customerPhone && customerPhone.length >= 10) {
+                console.log('🔍 TELEFONE SALVO PERFECT PAY:', customerPhone);
                 leadPurchases.set(customerPhone, {
                     timestamp: Date.now(),
                     originalData: data,
