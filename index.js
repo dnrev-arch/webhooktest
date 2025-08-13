@@ -379,7 +379,24 @@ app.post('/webhook/perfect', async (req, res) => {
 
 // Função para enviar para N8N
 async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
-    try {
+   try {
+        console.log('\n🔧 === DEBUG FUNÇÃO sendToN8N ===');
+        console.log('📥 Parâmetros recebidos:', {
+            eventType,
+            useWhatsAppWebhook,
+            hasData: !!data
+        });
+       console.log('📥 Parâmetros recebidos:', {
+            eventType,
+            useWhatsAppWebhook,
+            hasData: !!data
+        });
+        const webhookUrl = useWhatsAppWebhook ? N8N_WHATSAPP_URL : N8N_WEBHOOK_URL;
+        
+        console.log('🎯 URL selecionada:', webhookUrl);
+        console.log('🔧 N8N_WEBHOOK_URL:', N8N_WEBHOOK_URL);
+        console.log('📱 N8N_WHATSAPP_URL:', N8N_WHATSAPP_URL);
+        
         const payload = {
             ...data,
             event_type: eventType,
@@ -390,11 +407,11 @@ async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
             }
         };
         
-        console.log(`📤 Enviando para N8N - Tipo: ${eventType}`);
-        console.log('URL N8N:', webhookUrl);
+        console.log('📦 Payload preparado:', JSON.stringify(payload, null, 2));
+        console.log(`📤 INICIANDO ENVIO para N8N - Tipo: ${eventType}`);
         
-        addLog('info', 'Enviando para N8N - Tipo: ' + eventType);
-        const webhookUrl = useWhatsAppWebhook ? N8N_WHATSAPP_URL : N8N_WEBHOOK_URL;
+        addLog('info', 'INICIANDO envio para N8N - Tipo: ' + eventType);
+        
         const response = await axios.post(webhookUrl, payload, {
             headers: {
                 'Content-Type': 'application/json',
@@ -403,12 +420,22 @@ async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
             timeout: 15000
         });
         
-        console.log(`✅ Resposta N8N - Status: ${response.status}`);
-        addLog('webhook_sent', 'Enviado para N8N - Tipo: ' + eventType + ' | Status: ' + response.status);
+        console.log(`✅ SUCESSO! Resposta N8N - Status: ${response.status}`);
+        console.log('📄 Resposta completa:', response.data);
+        addLog('webhook_sent', 'SUCESSO - Enviado para N8N - Tipo: ' + eventType + ' | Status: ' + response.status);
+        
+        console.log('=== FIM DEBUG sendToN8N ===\n');
         
         return { success: true, status: response.status, data: response.data };
         
     } catch (error) {
+        console.log('\n❌ === ERRO NA FUNÇÃO sendToN8N ===');
+        console.log('🔥 Erro completo:', error);
+        console.log('📊 Error message:', error.message);
+        console.log('🌐 Error response:', error.response?.data);
+        console.log('📡 Error status:', error.response?.status);
+        console.log('🔗 URL que falhou:', useWhatsAppWebhook ? N8N_WHATSAPP_URL : N8N_WEBHOOK_URL);
+        
         const errorMessage = error.response ? 
             'HTTP ' + error.response.status + ': ' + error.response.statusText : 
             error.message;
@@ -416,9 +443,10 @@ async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
         console.error(`❌ Erro ao enviar para N8N:`, errorMessage);
         addLog('error', 'ERRO enviar N8N - Tipo: ' + eventType + ' | Erro: ' + errorMessage);
         
+        console.log('=== FIM ERRO sendToN8N ===\n');
+        
         return { success: false, error: errorMessage };
     }
-}
 
 // NOVO: Endpoint debug completo
 app.get('/debug', (req, res) => {
