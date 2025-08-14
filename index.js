@@ -27,14 +27,6 @@ function normalizePhone(phone) {
         apenas_numeros: normalized
     });
     
-    // NOVA LÓGICA ROBUSTA:
-    
-    // Se tem 13 dígitos e começa com 55 (Brasil)
-    if (normalized.length === 13 && normalized.startsWith('55')) {
-        normalized = normalized.substring(2); // Remove 55
-        console.log('📱 Removido código do país (55):', normalized);
-    }
-    
     // Se tem 12 dígitos, remove primeiro dígito
     if (normalized.length === 12) {
         normalized = normalized.substring(1);
@@ -49,14 +41,20 @@ function normalizePhone(phone) {
         console.log('📱 Adicionado 9 no celular (10->11):', normalized);
     }
     
-    // GARANTIR QUE SEMPRE TENHA 11 DÍGITOS
+    // ACEITAR 11 dígitos (sem DDI)
     if (normalized.length === 11) {
-        console.log('📱 Telefone normalizado final:', normalized);
+        console.log('📱 Telefone normalizado final (11 dígitos):', normalized);
         return normalized;
     }
     
-    // Se não conseguiu normalizar para 11 dígitos, retorna original
-    console.log('⚠️ Não foi possível normalizar para 11 dígitos:', normalized);
+    // ACEITAR 13 dígitos com 55 (com DDI do Brasil)
+    if (normalized.length === 13 && normalized.startsWith('55')) {
+        console.log('📱 Telefone com DDI Brasil mantido (13 dígitos):', normalized);
+        return normalized;
+    }
+    
+    // Se não conseguiu normalizar, retorna original
+    console.log('⚠️ Telefone com formato não padrão:', normalized);
     return normalized;
 }
 
@@ -733,4 +731,4 @@ app.listen(PORT, () => {
     console.log('💰 Webhook Perfect Pay: /webhook/perfect');
     console.log('🔍 Debug completo: /debug');
     console.log('📊 Interface: /');
-});
+}); +
