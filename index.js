@@ -27,6 +27,14 @@ function normalizePhone(phone) {
         apenas_numeros: normalized
     });
     
+    // NOVA LÓGICA ROBUSTA:
+    
+    // Se tem 13 dígitos e começa com 55 (Brasil) - MANTER
+    if (normalized.length === 13 && normalized.startsWith('55')) {
+        console.log('📱 Telefone com DDI Brasil mantido:', normalized);
+        return normalized;
+    }
+    
     // Se tem 12 dígitos, remove primeiro dígito
     if (normalized.length === 12) {
         normalized = normalized.substring(1);
@@ -41,20 +49,14 @@ function normalizePhone(phone) {
         console.log('📱 Adicionado 9 no celular (10->11):', normalized);
     }
     
-    // ACEITAR 11 dígitos (sem DDI)
-    if (normalized.length === 11) {
-        console.log('📱 Telefone normalizado final (11 dígitos):', normalized);
+    // GARANTIR QUE SEMPRE TENHA 11 OU 13 DÍGITOS
+    if (normalized.length === 11 || normalized.length === 13) {
+        console.log('📱 Telefone normalizado final:', normalized);
         return normalized;
     }
     
-    // ACEITAR 13 dígitos com 55 (com DDI do Brasil)
-    if (normalized.length === 13 && normalized.startsWith('55')) {
-        console.log('📱 Telefone com DDI Brasil mantido (13 dígitos):', normalized);
-        return normalized;
-    }
-    
-    // Se não conseguiu normalizar, retorna original
-    console.log('⚠️ Telefone com formato não padrão:', normalized);
+    // Se não conseguiu normalizar para 11 dígitos, retorna original
+    console.log('⚠️ Não foi possível normalizar para 11 dígitos:', normalized);
     return normalized;
 }
 
@@ -592,129 +594,129 @@ app.get('/health', (req, res) => {
 
 // Interface atualizada com debug
 app.get('/', (req, res) => {
-    const htmlContent = '<!DOCTYPE html>' +
-        '<html>' +
-        '<head>' +
-        '<title>Webhook Vendas v2.1 - Debug Total</title>' +
-        '<meta charset="utf-8">' +
-        '<style>' +
-        'body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }' +
-        '.container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }' +
-        'h1 { color: #333; text-align: center; }' +
-        '.status { background: #4CAF50; color: white; padding: 15px; border-radius: 5px; margin: 20px 0; text-align: center; }' +
-        '.debug-status { background: #ff9800; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; text-align: center; font-size: 14px; }' +
-        '.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }' +
-        '.stat-card { background: #f8f9fa; padding: 20px; border-radius: 5px; text-align: center; border-left: 4px solid #007bff; }' +
-        '.stat-value { font-size: 2em; font-weight: bold; color: #007bff; }' +
-        '.stat-label { color: #666; font-size: 0.9em; }' +
-        '.btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px; }' +
-        '.btn:hover { background: #0056b3; }' +
-        '.btn-debug { background: #dc3545; }' +
-        '.btn-debug:hover { background: #c82333; }' +
-        '.config { background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0; }' +
-        '.input-group { display: flex; gap: 10px; margin: 10px 0; }' +
-        '.form-input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }' +
-        '</style>' +
-        '</head>' +
-        '<body>' +
-        '<div class="container">' +
-        '<h1>🚀 Webhook Vendas v2.1 - DEBUG TOTAL</h1>' +
-        '<div class="status">' +
-        '<strong>Sistema Online</strong> - Monitorando vendas e respostas WhatsApp' +
-        '</div>' +
-        '<div class="debug-status">' +
-        '<strong>🔍 MODO DEBUG ATIVO</strong> - Capturando TODOS os formatos da Evolution API' +
-        '</div>' +
-        '<div class="stats">' +
-        '<div class="stat-card">' +
-        '<div class="stat-value" id="pending-count">0</div>' +
-        '<div class="stat-label">PIX Pendentes</div>' +
-        '</div>' +
-        '<div class="stat-card">' +
-        '<div class="stat-value" id="leads-responded">0</div>' +
-        '<div class="stat-label">Leads Responderam</div>' +
-        '</div>' +
-        '<div class="stat-card">' +
-        '<div class="stat-value" id="leads-waiting">0</div>' +
-        '<div class="stat-label">Aguardando Resposta</div>' +
-        '</div>' +
-        '<div class="stat-card">' +
-        '<div class="stat-value" id="total-received">0</div>' +
-        '<div class="stat-label">Total Recebidos</div>' +
-        '</div>' +
-        '</div>' +
-        '<div style="text-align: center; margin: 20px 0;">' +
-        '<button class="btn" onclick="refreshStatus()">🔄 Atualizar</button>' +
-        '<button class="btn" onclick="viewLeads()">👥 Ver Leads</button>' +
-        '<button class="btn btn-debug" onclick="viewDebug()">🔍 Debug Completo</button>' +
-        '</div>' +
-        '<div class="config">' +
-        '<h3>⚙️ Configuração N8N</h3>' +
-        '<div class="input-group">' +
-        '<input type="text" class="form-input" id="n8n-url" placeholder="URL do N8N webhook..." value="' + N8N_WEBHOOK_URL + '" />' +
-        '<button class="btn" onclick="saveUrl()">💾 Salvar</button>' +
-        '</div>' +
-        '</div>' +
-        '<div class="config">' +
-        '<h3>📍 Endpoints Disponíveis</h3>' +
-        '<p><strong>Perfect Pay:</strong> /webhook/perfect</p>' +
-        '<p><strong>WhatsApp:</strong> /webhook/whatsapp-response</p>' +
-        '<p><strong>Debug:</strong> /debug</p>' +
-        '</div>' +
-        '</div>' +
-        '<script>' +
-        'function refreshStatus() {' +
-        'fetch("/status")' +
-        '.then(r => r.json())' +
-        '.then(data => {' +
-        'document.getElementById("pending-count").textContent = data.pending_pix_orders;' +
-        'document.getElementById("leads-responded").textContent = data.lead_interaction_stats.responded;' +
-        'document.getElementById("leads-waiting").textContent = data.lead_interaction_stats.waiting_response;' +
-        'document.getElementById("total-received").textContent = data.statistics.total_webhooks_received;' +
-        '});' +
-        '}' +
-        'function viewLeads() {' +
-        'fetch("/leads-status")' +
-        '.then(r => r.json())' +
-        '.then(data => {' +
-        'alert("Leads Responderam: " + data.leads_responded + "\\nAguardando: " + data.leads_waiting_response);' +
-        '});' +
-        '}' +
-        'function viewDebug() {' +
-        'fetch("/debug")' +
-        '.then(r => r.json())' +
-        '.then(data => {' +
-        'const info = "ESTADO ATUAL:\\n" +' +
-        '"- Respostas: " + data.leadResponses.count + "\\n" +' +
-        '"- Compras: " + data.leadPurchases.count + "\\n" +' +
-        '"- PIX Pendentes: " + data.pendingPixOrders.count + "\\n\\n" +' +
-        '"ESTATÍSTICAS:\\n" +' +
-        '"- Webhooks: " + data.stats.total_webhooks + "\\n" +' +
-        '"- Respostas detectadas: " + data.stats.responses_detected + "\\n" +' +
-        '"- Continuações enviadas: " + data.stats.continuations_sent + "\\n" +' +
-        '"- Erros: " + data.stats.errors;' +
-        'alert(info);' +
-        'console.log("Debug completo:", data);' +
-        '});' +
-        '}' +
-        'function saveUrl() {' +
-        'const url = document.getElementById("n8n-url").value;' +
-        'fetch("/config/n8n-url", {' +
-        'method: "POST",' +
-        'headers: {"Content-Type": "application/json"},' +
-        'body: JSON.stringify({url: url})' +
-        '})' +
-        '.then(r => r.json())' +
-        '.then(data => {' +
-        'alert(data.message);' +
-        'refreshStatus();' +
-        '});' +
-        '}' +
-        'setInterval(refreshStatus, 10000);' +
-        'refreshStatus();' +
-        '</script>' +
-        '</body>' +
-        '</html>';
+    const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+<title>Webhook Vendas v2.1 - Debug Total</title>
+<meta charset="utf-8">
+<style>
+body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+.container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }
+h1 { color: #333; text-align: center; }
+.status { background: #4CAF50; color: white; padding: 15px; border-radius: 5px; margin: 20px 0; text-align: center; }
+.debug-status { background: #ff9800; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; text-align: center; font-size: 14px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+.stat-card { background: #f8f9fa; padding: 20px; border-radius: 5px; text-align: center; border-left: 4px solid #007bff; }
+.stat-value { font-size: 2em; font-weight: bold; color: #007bff; }
+.stat-label { color: #666; font-size: 0.9em; }
+.btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px; }
+.btn:hover { background: #0056b3; }
+.btn-debug { background: #dc3545; }
+.btn-debug:hover { background: #c82333; }
+.config { background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0; }
+.input-group { display: flex; gap: 10px; margin: 10px 0; }
+.form-input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>🚀 Webhook Vendas v2.1 - DEBUG TOTAL</h1>
+<div class="status">
+<strong>Sistema Online</strong> - Monitorando vendas e respostas WhatsApp
+</div>
+<div class="debug-status">
+<strong>🔍 MODO DEBUG ATIVO</strong> - Capturando TODOS os formatos da Evolution API
+</div>
+<div class="stats">
+<div class="stat-card">
+<div class="stat-value" id="pending-count">0</div>
+<div class="stat-label">PIX Pendentes</div>
+</div>
+<div class="stat-card">
+<div class="stat-value" id="leads-responded">0</div>
+<div class="stat-label">Leads Responderam</div>
+</div>
+<div class="stat-card">
+<div class="stat-value" id="leads-waiting">0</div>
+<div class="stat-label">Aguardando Resposta</div>
+</div>
+<div class="stat-card">
+<div class="stat-value" id="total-received">0</div>
+<div class="stat-label">Total Recebidos</div>
+</div>
+</div>
+<div style="text-align: center; margin: 20px 0;">
+<button class="btn" onclick="refreshStatus()">🔄 Atualizar</button>
+<button class="btn" onclick="viewLeads()">👥 Ver Leads</button>
+<button class="btn btn-debug" onclick="viewDebug()">🔍 Debug Completo</button>
+</div>
+<div class="config">
+<h3>⚙️ Configuração N8N</h3>
+<div class="input-group">
+<input type="text" class="form-input" id="n8n-url" placeholder="URL do N8N webhook..." value="${N8N_WEBHOOK_URL}" />
+<button class="btn" onclick="saveUrl()">💾 Salvar</button>
+</div>
+</div>
+<div class="config">
+<h3>📍 Endpoints Disponíveis</h3>
+<p><strong>Perfect Pay:</strong> /webhook/perfect</p>
+<p><strong>WhatsApp:</strong> /webhook/whatsapp-response</p>
+<p><strong>Debug:</strong> /debug</p>
+</div>
+</div>
+<script>
+function refreshStatus() {
+fetch("/status")
+.then(r => r.json())
+.then(data => {
+document.getElementById("pending-count").textContent = data.pending_pix_orders;
+document.getElementById("leads-responded").textContent = data.lead_interaction_stats.responded;
+document.getElementById("leads-waiting").textContent = data.lead_interaction_stats.waiting_response;
+document.getElementById("total-received").textContent = data.statistics.total_webhooks_received;
+});
+}
+function viewLeads() {
+fetch("/leads-status")
+.then(r => r.json())
+.then(data => {
+alert("Leads Responderam: " + data.leads_responded + "\\nAguardando: " + data.leads_waiting_response);
+});
+}
+function viewDebug() {
+fetch("/debug")
+.then(r => r.json())
+.then(data => {
+const info = "ESTADO ATUAL:\\n" +
+"- Respostas: " + data.leadResponses.count + "\\n" +
+"- Compras: " + data.leadPurchases.count + "\\n" +
+"- PIX Pendentes: " + data.pendingPixOrders.count + "\\n\\n" +
+"ESTATÍSTICAS:\\n" +
+"- Webhooks: " + data.stats.total_webhooks + "\\n" +
+"- Respostas detectadas: " + data.stats.responses_detected + "\\n" +
+"- Continuações enviadas: " + data.stats.continuations_sent + "\\n" +
+"- Erros: " + data.stats.errors;
+alert(info);
+console.log("Debug completo:", data);
+});
+}
+function saveUrl() {
+const url = document.getElementById("n8n-url").value;
+fetch("/config/n8n-url", {
+method: "POST",
+headers: {"Content-Type": "application/json"},
+body: JSON.stringify({url: url})
+})
+.then(r => r.json())
+.then(data => {
+alert(data.message);
+refreshStatus();
+});
+}
+setInterval(refreshStatus, 10000);
+refreshStatus();
+</script>
+</body>
+</html>`;
     
     res.send(htmlContent);
 });
@@ -731,4 +733,4 @@ app.listen(PORT, () => {
     console.log('💰 Webhook Perfect Pay: /webhook/perfect');
     console.log('🔍 Debug completo: /debug');
     console.log('📊 Interface: /');
-}); +
+});
