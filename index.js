@@ -27,36 +27,76 @@ function normalizePhone(phone) {
         apenas_numeros: normalized
     });
     
-    // NOVA LÓGICA ROBUSTA:
+    // Lista completa de DDDs brasileiros
+    const ddds_brasileiros = [
+        '11','12','13','14','15','16','17','18','19', // SP
+        '21','22','24','27','28', // RJ/ES
+        '31','32','33','34','35','37','38', // MG
+        '41','42','43','44','45','46', // PR
+        '47','48','49', // SC
+        '51','53','54','55', // RS
+        '61','62','63','64','65','66','67', // Centro-Oeste
+        '68','69', // Norte
+        '71','73','74','75','77','79', // BA/SE
+        '81','82','83','84','85','86','87','88','89', // Nordeste
+        '91','92','93','94','95','96','97','98','99' // Norte/MA
+    ];
     
-    // Se tem 13 dígitos e começa com 55 (Brasil) - MANTER
+    // CORREÇÃO PRINCIPAL: Se tem DDI 57 com DDD brasileiro (bug do sistema)
+    if (normalized.startsWith('57') && normalized.length >= 12) {
+        // Verifica os próximos 2 dígitos (possível DDD)
+        const possivelDDD = normalized.substring(2, 4);
+        
+        if (ddds_brasileiros.includes(possivelDDD)) {
+            console.log('🔧 Detectado DDI 57 com DDD brasileiro - corrigindo...');
+            
+            // Remove DDI 57 errado
+            let semDDI = normalized.substring(2);
+            
+            // Se ficou com 11 dígitos e começa com 0, remove o 0
+            if (semDDI.length === 11 && semDDI[0] === '0') {
+                semDDI = semDDI.substring(1);
+                console.log('📱 Removido zero extra:', semDDI);
+            }
+            
+            // Adiciona DDI 55 correto
+            normalized = '55' + semDDI;
+            console.log('✅ Corrigido DDI 57→55:', normalized);
+            return normalized;
+        }
+    }
+    
+    // Se tem 13 dígitos e começa com 55 (Brasil) - MANTER COMO ESTÁ
     if (normalized.length === 13 && normalized.startsWith('55')) {
-        console.log('📱 Telefone com DDI Brasil mantido:', normalized);
+        console.log('✅ Telefone brasileiro correto - mantido:', normalized);
         return normalized;
     }
     
-    // Se tem 12 dígitos, remove primeiro dígito
-    if (normalized.length === 12) {
-        normalized = normalized.substring(1);
-        console.log('📱 Removido primeiro dígito (12->11):', normalized);
+    // Se tem 11 dígitos (celular brasileiro sem DDI)
+    if (normalized.length === 11) {
+        const ddd = normalized.substring(0, 2);
+        if (ddds_brasileiros.includes(ddd)) {
+            // Adiciona DDI 55
+            normalized = '55' + normalized;
+            console.log('📱 Adicionado DDI 55:', normalized);
+            return normalized;
+        }
     }
     
-    // Se tem 10 dígitos, adiciona 9 no celular
+    // Se tem 10 dígitos (telefone antigo sem 9)
     if (normalized.length === 10) {
         const ddd = normalized.substring(0, 2);
-        const numero = normalized.substring(2);
-        normalized = ddd + '9' + numero;
-        console.log('📱 Adicionado 9 no celular (10->11):', normalized);
+        if (ddds_brasileiros.includes(ddd)) {
+            // Adiciona 9 e DDI
+            const numero = normalized.substring(2);
+            normalized = '55' + ddd + '9' + numero;
+            console.log('📱 Adicionado 9 e DDI:', normalized);
+            return normalized;
+        }
     }
     
-    // GARANTIR QUE SEMPRE TENHA 11 OU 13 DÍGITOS
-    if (normalized.length === 11 || normalized.length === 13) {
-        console.log('📱 Telefone normalizado final:', normalized);
-        return normalized;
-    }
-    
-    // Se não conseguiu normalizar para 11 dígitos, retorna original
-    console.log('⚠️ Não foi possível normalizar para 11 dígitos:', normalized);
+    // IMPORTANTE: NÃO remover dígitos se não identificamos o padrão
+    console.log('📱 Telefone final (sem alterações):', normalized);
     return normalized;
 }
 
@@ -259,7 +299,7 @@ app.post('/webhook/perfect', async (req, res) => {
         
         // Extrair telefone com debug detalhado
         const phoneOptions = {
-            concatenated: (data.customer?.phone_extension_number || '') + 
+            concatenated: (data.customer?.phone_extension || '') + 
                          (data.customer?.phone_area_code || '') + 
                          (data.customer?.phone_number || ''),
             direct_phone: data.customer?.phone,
