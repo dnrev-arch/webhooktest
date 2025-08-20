@@ -137,11 +137,22 @@ function cleanOldLeads() {
 
 setInterval(cleanOldLeads, 60 * 60 * 1000);
 
-// WEBHOOK WHATSAPP - VERSÃO DEBUG TOTAL PARA CAPTURAR TUDO
+// WEBHOOK WHATSAPP - VERSÃO CORRIGIDA SEM LOOP
 app.post('/webhook/whatsapp-response', async (req, res) => {
     try {
-        console.log('\n🔍 === WEBHOOK WHATSAPP DEBUG TOTAL ===');
-        console.log('Body completo:', JSON.stringify(req.body, null, 2));
+        console.log('\n🔍 === WEBHOOK WHATSAPP INICIADO ===');
+        
+        // ✅ ANTI-DUPLICATA IMEDIATO - Verificar se já processamos este webhook
+        const requestId = req.body.key?.id || JSON.stringify(req.body).substring(0, 100);
+        const duplicateKey = 'wh_dup_' + requestId;
+        
+        if (leadResponses.has(duplicateKey)) {
+            console.log('🛑 WEBHOOK DUPLICADO - Ignorando para evitar loop');
+            return res.status(200).json({ success: true, duplicated: true });
+        }
+        
+        // Marcar como processado por 5 minutos
+        leadResponses.set(duplicateKey, { timestamp: Date.now() });
         
         const data = req.body;
         
@@ -228,7 +239,11 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             // SEMPRE continuar fluxo quando lead responder
             console.log('🎯 Lead respondeu - continuando fluxo automaticamente');
 
-            // Preparar dados para continuação do fluxo
+            // Buscar dados do PIX salvos para este telefone
+            let pixDataSalvo = leadPurchases.get(normalizedPhone);
+            console.log('💰 Dados PIX encontrados para', normalizedPhone, ':', pixDataSalvo ? 'SIM' : 'NÃO');
+
+            // Preparar dados para continuação do fluxo COM DADOS DO PIX
             const continuationPayload = {
                 lead_interaction: {
                     responded: true,
@@ -241,13 +256,23 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
                 system_info: {
                     source: 'perfect-webhook-system-v2',
                     version: '2.1'
-                }
+                },
+                // INCLUIR DADOS DO PIX SE EXISTIREM
+                ...(pixDataSalvo && {
+                    billet_url: pixDataSalvo.originalData?.billet_url || '',
+                    billet_number: pixDataSalvo.originalData?.billet_number || '',
+                    sale_amount: pixDataSalvo.amount || 0,
+                    sale_status_enum_key: pixDataSalvo.originalData?.sale_status_enum_key || 'pending',
+                    customer: pixDataSalvo.originalData?.customer || {},
+                    order_code: pixDataSalvo.orderCode || ''
+                })
             };
 
-            console.log('🚨 TESTE: VAI ENVIAR PARA WEBHOOK1!');
-            console.log('🚨 URL WEBHOOK1:', N8N_WHATSAPP_URL);
-            console.log('📤 Enviando continuação para N8N:', JSON.stringify(continuationPayload, null, 2));
+            console.log('📤 Payload com PIX incluído:', 
+                pixDataSalvo ? 'URL: ' + (pixDataSalvo.originalData?.billet_url || 'N/A') : 'Sem dados PIX'
+            );
 
+            console.log('🚀 Enviando continuação para N8N...');
             const sendResult = await sendToN8N(continuationPayload, 'lead_active_continuation', true);
 
             if (sendResult.success) {
@@ -266,7 +291,7 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             addLog('info', '📊 Estrutura recebida: ' + Object.keys(data).join(', '));
         }
         
-        console.log('=== FIM DEBUG WHATSAPP ===\n');
+        console.log('=== FIM WEBHOOK WHATSAPP ===\n');
         
         res.status(200).json({ 
             success: true, 
@@ -285,11 +310,10 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
     }
 });
 
-// Webhook Perfect Pay - VERSÃO MELHORADA
+// Webhook Perfect Pay - VERSÃO CORRIGIDA
 app.post('/webhook/perfect', async (req, res) => {
     try {
-        console.log('\n💰 === DEBUG PERFECT PAY ===');
-        console.log('Dados recebidos:', JSON.stringify(req.body, null, 2));
+        console.log('\n💰 === WEBHOOK PERFECT PAY INICIADO ===');
         
         const data = req.body;
         const orderCode = data.code;
@@ -412,7 +436,7 @@ app.post('/webhook/perfect', async (req, res) => {
         console.log('- PIX pendentes:', pendingPixOrders.size);
         console.log('- Compras monitoradas:', leadPurchases.size);
         console.log('- Respostas registradas:', leadResponses.size);
-        console.log('=== FIM DEBUG PERFECT PAY ===\n');
+        console.log('=== FIM WEBHOOK PERFECT PAY ===\n');
         
         res.status(200).json({ 
             success: true, 
@@ -428,21 +452,16 @@ app.post('/webhook/perfect', async (req, res) => {
     }
 });
 
-// Função para enviar para N8N - CORRIGIDA
+// ✅✅✅ FUNÇÃO sendToN8N CORRIGIDA - SEM RETRY AUTOMÁTICO
 async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
     try {
-        console.log('\n🔧 === DEBUG FUNÇÃO sendToN8N ===');
-        console.log('📥 Parâmetros recebidos:', {
-            eventType,
-            useWhatsAppWebhook,
-            hasData: !!data
-        });
+        console.log('\n🔧 === ENVIO PARA N8N INICIADO ===');
+        console.log('📥 Event Type:', eventType);
+        console.log('📱 WhatsApp Webhook:', useWhatsAppWebhook);
         
         const webhookUrl = useWhatsAppWebhook ? N8N_WHATSAPP_URL : N8N_WEBHOOK_URL;
         
         console.log('🎯 URL selecionada:', webhookUrl);
-        console.log('🔧 N8N_WEBHOOK_URL:', N8N_WEBHOOK_URL);
-        console.log('📱 N8N_WHATSAPP_URL:', N8N_WHATSAPP_URL);
         
         const payload = {
             ...data,
@@ -454,49 +473,57 @@ async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
             }
         };
         
-        console.log('📦 Payload preparado:', JSON.stringify(payload, null, 2));
-        console.log(`📤 INICIANDO ENVIO para N8N - Tipo: ${eventType}`);
+        console.log('📦 Payload preparado (resumido):', {
+            event_type: payload.event_type,
+            has_phone: !!payload.lead_interaction?.phone,
+            has_pix_data: !!(payload.billet_url || payload.billet_number)
+        });
         
-        addLog('info', 'INICIANDO envio para N8N - Tipo: ' + eventType);
+        console.log(`📤 ENVIANDO para N8N - SEM RETRY AUTOMÁTICO`);
         
+        addLog('info', 'ENVIANDO para N8N - Tipo: ' + eventType + ' - SEM RETRY');
+        
+        // ⚠️⚠️⚠️ ENVIO ÚNICO - SEM TENTATIVAS DE RETRY
         const response = await axios.post(webhookUrl, payload, {
             headers: {
                 'Content-Type': 'application/json',
                 'User-Agent': 'Perfect-Webhook-System-v2/2.1'
             },
-            timeout: 15000
+            timeout: 10000 // ⏰ Timeout de 10 segundos
         });
         
         console.log(`✅ SUCESSO! Resposta N8N - Status: ${response.status}`);
-        console.log('📄 Resposta completa:', response.data);
         addLog('webhook_sent', 'SUCESSO - Enviado para N8N - Tipo: ' + eventType + ' | Status: ' + response.status);
         
-        console.log('=== FIM DEBUG sendToN8N ===\n');
+        console.log('=== FIM ENVIO N8N ===\n');
         
         return { success: true, status: response.status, data: response.data };
         
     } catch (error) {
-        console.log('\n❌ === ERRO NA FUNÇÃO sendToN8N ===');
-        console.log('🔥 Erro completo:', error);
-        console.log('📊 Error message:', error.message);
-        console.log('🌐 Error response:', error.response?.data);
-        console.log('📡 Error status:', error.response?.status);
-        console.log('🔗 URL que falhou:', useWhatsAppWebhook ? N8N_WHATSAPP_URL : N8N_WEBHOOK_URL);
+        console.log('\n❌ === ERRO NO ENVIO PARA N8N ===');
+        console.log('🔥 Erro:', error.message);
+        console.log('🔗 URL:', webhookUrl);
+        console.log('📊 Detalhes:', error.response?.status, error.response?.statusText);
         
+        // ⚠️ APENAS LOGAR O ERRO - NÃO TENTAR NOVAMENTE
         const errorMessage = error.response ? 
             'HTTP ' + error.response.status + ': ' + error.response.statusText : 
             error.message;
             
-        console.error(`❌ Erro ao enviar para N8N:`, errorMessage);
-        addLog('error', 'ERRO enviar N8N - Tipo: ' + eventType + ' | Erro: ' + errorMessage);
+        console.error('❌ Erro único - NÃO tentando novamente');
+        addLog('error', 'ERRO enviar N8N - Tipo: ' + eventType + ' | Erro: ' + errorMessage + ' | SEM RETRY');
         
-        console.log('=== FIM ERRO sendToN8N ===\n');
+        console.log('=== FIM ERRO ENVIO ===\n');
         
-        return { success: false, error: errorMessage };
+        return { 
+            success: false, 
+            error: errorMessage,
+            no_retry: true // 🚫 FLAG CRÍTICA: NÃO RETENTAR
+        };
     }
 }
 
-// NOVO: Endpoint debug completo
+// Endpoints de debug e status (mantidos iguais)
 app.get('/debug', (req, res) => {
     const debugInfo = {
         timestamp: new Date().toISOString(),
@@ -553,7 +580,6 @@ app.get('/debug', (req, res) => {
     res.json(debugInfo);
 });
 
-// Endpoint status dos leads
 app.get('/leads-status', (req, res) => {
     const responsesList = Array.from(leadResponses.entries()).map(([phone, data]) => ({
         phone: phone,
@@ -580,7 +606,6 @@ app.get('/leads-status', (req, res) => {
     });
 });
 
-// Endpoint status geral
 app.get('/status', (req, res) => {
     const stats = {
         total_webhooks_received: systemLogs.filter(log => log.type === 'webhook_received').length,
@@ -606,7 +631,6 @@ app.get('/status', (req, res) => {
     });
 });
 
-// Configurar URL N8N
 app.post('/config/n8n-url', (req, res) => {
     const url = req.body.url;
     if (url) {
@@ -618,7 +642,6 @@ app.post('/config/n8n-url', (req, res) => {
     }
 });
 
-// Health check
 app.get('/health', (req, res) => {
     res.json({
         status: 'online',
@@ -637,7 +660,7 @@ app.get('/', (req, res) => {
     const htmlContent = `<!DOCTYPE html>
 <html>
 <head>
-<title>Webhook Vendas v2.1 - Debug Total</title>
+<title>Webhook Vendas v2.1 - SEM LOOP</title>
 <meta charset="utf-8">
 <style>
 body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
@@ -660,12 +683,12 @@ h1 { color: #333; text-align: center; }
 </head>
 <body>
 <div class="container">
-<h1>🚀 Webhook Vendas v2.1 - DEBUG TOTAL</h1>
+<h1>🚀 Webhook Vendas v2.1 - SEM LOOP</h1>
 <div class="status">
-<strong>Sistema Online</strong> - Monitorando vendas e respostas WhatsApp
+<strong>✅ Sistema Corrigido - Sem Loop</strong>
 </div>
 <div class="debug-status">
-<strong>🔍 MODO DEBUG ATIVO</strong> - Capturando TODOS os formatos da Evolution API
+<strong>🔧 MODIFICAÇÕES APLICADAS:</strong> Anti-duplicata + Sem Retry Automático
 </div>
 <div class="stats">
 <div class="stat-card">
@@ -763,12 +786,9 @@ refreshStatus();
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    addLog('info', 'Sistema v2.1 iniciado na porta ' + PORT);
-    addLog('info', 'Perfect: /webhook/perfect');
-    addLog('info', 'WhatsApp: /webhook/whatsapp-response');
-    addLog('info', 'Debug: /debug');
-    addLog('info', 'Interface: /');
-    console.log('🚀 Servidor rodando na porta ' + PORT);
+    addLog('info', 'Sistema v2.1 CORRIGIDO iniciado na porta ' + PORT);
+    addLog('info', '✅ Anti-loop implementado - SEM retry automático');
+    console.log('🚀 Servidor CORRIGIDO rodando na porta ' + PORT);
     console.log('📱 Webhook WhatsApp: /webhook/whatsapp-response');
     console.log('💰 Webhook Perfect Pay: /webhook/perfect');
     console.log('🔍 Debug completo: /debug');
