@@ -243,7 +243,7 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             let pixDataSalvo = leadPurchases.get(normalizedPhone);
             console.log('💰 Dados PIX encontrados para', normalizedPhone, ':', pixDataSalvo ? 'SIM' : 'NÃO');
 
-            // Preparar dados para continuação do fluxo COM DADOS DO PIX
+            // ✅✅✅ CORREÇÃO CRÍTICA: SEMPRE enviar dados do PIX, mesmo que vazios
             const continuationPayload = {
                 lead_interaction: {
                     responded: true,
@@ -255,22 +255,22 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
                 processed_at: new Date().toISOString(),
                 system_info: {
                     source: 'perfect-webhook-system-v2',
-                    version: '2.1'
+                    version: '2.2' // Atualizado para versão 2.2
                 },
-                // INCLUIR DADOS DO PIX SE EXISTIREM
-                ...(pixDataSalvo && {
-                    billet_url: pixDataSalvo.originalData?.billet_url || '',
-                    billet_number: pixDataSalvo.originalData?.billet_number || '',
-                    sale_amount: pixDataSalvo.amount || 0,
-                    sale_status_enum_key: pixDataSalvo.originalData?.sale_status_enum_key || 'pending',
-                    customer: pixDataSalvo.originalData?.customer || {},
-                    order_code: pixDataSalvo.orderCode || ''
-                })
+                // ✅✅✅ SEMPRE INCLUIR CAMPOS DO PIX (MESMO VAZIOS)
+                billet_url: pixDataSalvo?.originalData?.billet_url || '',
+                billet_number: pixDataSalvo?.originalData?.billet_number || '',
+                sale_amount: pixDataSalvo?.amount || 0,
+                sale_status_enum_key: pixDataSalvo?.originalData?.sale_status_enum_key || 'pending',
+                customer: pixDataSalvo?.originalData?.customer || {},
+                order_code: pixDataSalvo?.orderCode || ''
             };
 
-            console.log('📤 Payload com PIX incluído:', 
-                pixDataSalvo ? 'URL: ' + (pixDataSalvo.originalData?.billet_url || 'N/A') : 'Sem dados PIX'
-            );
+            console.log('📤 Payload com PIX garantido:', {
+                has_billet_url: !!continuationPayload.billet_url,
+                has_billet_number: !!continuationPayload.billet_number,
+                sale_amount: continuationPayload.sale_amount
+            });
 
             console.log('🚀 Enviando continuação para N8N...');
             const sendResult = await sendToN8N(continuationPayload, 'lead_active_continuation', true);
@@ -469,7 +469,7 @@ async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
             processed_at: new Date().toISOString(),
             system_info: {
                 source: 'perfect-webhook-system-v2',
-                version: '2.1'
+                version: '2.2' // Atualizado para 2.2
             }
         };
         
@@ -487,7 +487,7 @@ async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
         const response = await axios.post(webhookUrl, payload, {
             headers: {
                 'Content-Type': 'application/json',
-                'User-Agent': 'Perfect-Webhook-System-v2/2.1'
+                'User-Agent': 'Perfect-Webhook-System-v2/2.2'
             },
             timeout: 10000 // ⏰ Timeout de 10 segundos
         });
@@ -660,7 +660,7 @@ app.get('/', (req, res) => {
     const htmlContent = `<!DOCTYPE html>
 <html>
 <head>
-<title>Webhook Vendas v2.1 - SEM LOOP</title>
+<title>Webhook Vendas v2.2 - SEM BLOQUEIO</title>
 <meta charset="utf-8">
 <style>
 body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
@@ -683,12 +683,12 @@ h1 { color: #333; text-align: center; }
 </head>
 <body>
 <div class="container">
-<h1>🚀 Webhook Vendas v2.1 - SEM LOOP</h1>
+<h1>🚀 Webhook Vendas v2.2 - SEM BLOQUEIO</h1>
 <div class="status">
-<strong>✅ Sistema Corrigido - Sem Loop</strong>
+<strong>✅ Sistema Corrigido - Sem Bloqueio de Clientes</strong>
 </div>
 <div class="debug-status">
-<strong>🔧 MODIFICAÇÕES APLICADAS:</strong> Anti-duplicata + Sem Retry Automático
+<strong>🔧 MODIFICAÇÕES APLICADAS:</strong> Compartilhamento garantido de dados PIX
 </div>
 <div class="stats">
 <div class="stat-card">
@@ -786,9 +786,9 @@ refreshStatus();
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    addLog('info', 'Sistema v2.1 CORRIGIDO iniciado na porta ' + PORT);
-    addLog('info', '✅ Anti-loop implementado - SEM retry automático');
-    console.log('🚀 Servidor CORRIGIDO rodando na porta ' + PORT);
+    addLog('info', 'Sistema v2.2 CORRIGIDO iniciado na porta ' + PORT);
+    addLog('info', '✅ Compartilhamento de dados PIX implementado');
+    console.log('🚀 Servidor v2.2 rodando na porta ' + PORT);
     console.log('📱 Webhook WhatsApp: /webhook/whatsapp-response');
     console.log('💰 Webhook Perfect Pay: /webhook/perfect');
     console.log('🔍 Debug completo: /debug');
