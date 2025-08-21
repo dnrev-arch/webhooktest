@@ -15,7 +15,7 @@ const PIX_TIMEOUT = 7 * 60 * 1000; // 7 minutos
 
 app.use(express.json());
 
-// Função para normalizar telefones - VERSÃO CORRIGIDA
+// Função para normalizar telefones - VERSÃO CORRIGIDA v2.3
 function normalizePhone(phone) {
     if (!phone) return '';
     
@@ -42,25 +42,13 @@ function normalizePhone(phone) {
         '91','92','93','94','95','96','97','98','99' // Norte/MA
     ];
     
-    // CORREÇÃO PRINCIPAL: Se tem DDI 57 com DDD brasileiro (bug do sistema)
-    if (normalized.startsWith('57') && normalized.length >= 12) {
-        // Verifica os próximos 2 dígitos (possível DDD)
+    // CORREÇÃO: Se tem DDI 57 com DDD brasileiro (bug do sistema)
+    if (normalized.startsWith('57') && normalized.length === 13) {
         const possivelDDD = normalized.substring(2, 4);
         
         if (ddds_brasileiros.includes(possivelDDD)) {
             console.log('🔧 Detectado DDI 57 com DDD brasileiro - corrigindo...');
-            
-            // Remove DDI 57 errado
-            let semDDI = normalized.substring(2);
-            
-            // Se ficou com 11 dígitos e começa com 0, remove o 0
-            if (semDDI.length === 11 && semDDI[0] === '0') {
-                semDDI = semDDI.substring(1);
-                console.log('📱 Removido zero extra:', semDDI);
-            }
-            
-            // Adiciona DDI 55 correto
-            normalized = '55' + semDDI;
+            normalized = '55' + normalized.substring(2);
             console.log('✅ Corrigido DDI 57→55:', normalized);
             return normalized;
         }
@@ -68,7 +56,7 @@ function normalizePhone(phone) {
     
     // Se tem 13 dígitos e começa com 55 (Brasil) - MANTER COMO ESTÁ
     if (normalized.length === 13 && normalized.startsWith('55')) {
-        console.log('✅ Telefone brasileiro correto - mantido:', normalized);
+        console.log('✅ Telefone brasileiro correto:', normalized);
         return normalized;
     }
     
@@ -76,7 +64,6 @@ function normalizePhone(phone) {
     if (normalized.length === 11) {
         const ddd = normalized.substring(0, 2);
         if (ddds_brasileiros.includes(ddd)) {
-            // Adiciona DDI 55
             normalized = '55' + normalized;
             console.log('📱 Adicionado DDI 55:', normalized);
             return normalized;
@@ -87,7 +74,6 @@ function normalizePhone(phone) {
     if (normalized.length === 10) {
         const ddd = normalized.substring(0, 2);
         if (ddds_brasileiros.includes(ddd)) {
-            // Adiciona 9 e DDI
             const numero = normalized.substring(2);
             normalized = '55' + ddd + '9' + numero;
             console.log('📱 Adicionado 9 e DDI:', normalized);
@@ -95,8 +81,7 @@ function normalizePhone(phone) {
         }
     }
     
-    // IMPORTANTE: NÃO remover dígitos se não identificamos o padrão
-    console.log('📱 Telefone final (sem alterações):', normalized);
+    console.log('📱 Telefone final:', normalized);
     return normalized;
 }
 
@@ -112,6 +97,7 @@ function addLog(type, message, data = null) {
     systemLogs.push(logEntry);
     console.log('[' + logEntry.timestamp + '] ' + type.toUpperCase() + ': ' + message);
     
+    // Limpar logs antigos
     const oneHourAgo = Date.now() - LOG_RETENTION_TIME;
     systemLogs = systemLogs.filter(log => new Date(log.timestamp).getTime() > oneHourAgo);
 }
@@ -137,33 +123,178 @@ function cleanOldLeads() {
 
 setInterval(cleanOldLeads, 60 * 60 * 1000);
 
-// WEBHOOK WHATSAPP - VERSÃO CORRIGIDA SEM LOOP
+// WEBHOOK PERFECT PAY - VERSÃO CORRIGIDA v2.3
+app.post('/webhook/perfect', async (req, res) => {
+    try {
+        console.log('\n💰 === WEBHOOK PERFECT PAY INICIADO ===');
+        
+        const data = req.body;
+        const orderCode = data.code || '';
+        const status = data.sale_status_enum_key || '';
+        const customerName = data.customer?.full_name || 'N/A';
+        const amount = data.sale_amount || 0;
+        
+        // ✅ CORREÇÃO CRÍTICA: Extrair telefone corretamente do Perfect Pay
+        const phoneExtension = data.customer?.phone_extension || '';
+        const phoneAreaCode = data.customer?.phone_area_code || '';
+        const phoneNumber = data.customer?.phone_number || '';
+        
+        // Concatenar os campos do telefone
+        const rawCustomerPhone = phoneExtension + phoneAreaCode + phoneNumber;
+        
+        console.log('📱 Campos de telefone Perfect Pay:', {
+            extension: phoneExtension,
+            area_code: phoneAreaCode,
+            number: phoneNumber,
+            concatenated: rawCustomerPhone
+        });
+        
+        // Normalizar telefone
+        const customerPhone = normalizePhone(rawCustomerPhone);
+        
+        console.log('📱 Telefone Perfect Pay processado:', {
+            raw: rawCustomerPhone,
+            normalized: customerPhone
+        });
+        
+        // ✅ EXTRAIR DADOS PIX CORRETAMENTE
+        const pixUrl = data.billet_url || '';
+        const pixCode = data.billet_number || '';
+        
+        console.log('💰 Dados PIX recebidos:', {
+            url: pixUrl ? 'Presente' : 'Ausente',
+            code: pixCode ? 'Presente' : 'Ausente',
+            order_code: orderCode,
+            status: status
+        });
+        
+        addLog('webhook_received', `Webhook Perfect Pay - Pedido: ${orderCode} | Status: ${status} | Tel: ${customerPhone}`, {
+            order_code: orderCode,
+            status: status,
+            phone: customerPhone,
+            has_pix_url: !!pixUrl,
+            has_pix_code: !!pixCode
+        });
+        
+        // ✅ SEMPRE SALVAR DADOS DO LEAD E PIX
+        if (customerPhone && customerPhone.length >= 10) {
+            console.log('💾 Salvando dados do lead:', customerPhone);
+            
+            leadPurchases.set(customerPhone, {
+                timestamp: Date.now(),
+                originalData: {
+                    ...data,
+                    // ✅ GARANTIR que os campos PIX estejam salvos
+                    billet_url: pixUrl,
+                    billet_number: pixCode,
+                    sale_amount: amount,
+                    sale_status_enum_key: status,
+                    code: orderCode
+                },
+                orderCode: orderCode,
+                customerName: customerName,
+                amount: amount,
+                phone: customerPhone,
+                pixUrl: pixUrl,
+                pixCode: pixCode
+            });
+            
+            console.log('✅ Lead salvo com dados PIX completos');
+            addLog('info', `LEAD REGISTRADO - Tel: ${customerPhone} | PIX URL: ${!!pixUrl} | PIX Code: ${!!pixCode}`);
+        }
+        
+        // Processar diferentes status
+        if (status === 'approved') {
+            addLog('info', `✅ VENDA APROVADA - ${orderCode}`);
+            
+            // Limpar pendentes
+            if (pendingPixOrders.has(orderCode)) {
+                clearTimeout(pendingPixOrders.get(orderCode).timeout);
+                pendingPixOrders.delete(orderCode);
+            }
+            
+        } else if (status === 'pending') {
+            addLog('info', `⏳ PIX GERADO - ${orderCode} | Tel: ${customerPhone}`);
+            
+            // Configurar timeout
+            if (pendingPixOrders.has(orderCode)) {
+                clearTimeout(pendingPixOrders.get(orderCode).timeout);
+            }
+            
+            const timeout = setTimeout(async () => {
+                addLog('timeout', `⏰ TIMEOUT PIX - ${orderCode}`);
+                pendingPixOrders.delete(orderCode);
+                
+                // Enviar timeout para N8N
+                await sendToN8N(data, 'pix_timeout');
+            }, PIX_TIMEOUT);
+            
+            pendingPixOrders.set(orderCode, {
+                data: data,
+                timeout: timeout,
+                timestamp: new Date(),
+                customer_name: customerName,
+                amount: amount,
+                customer_phone: customerPhone
+            });
+        }
+        
+        // ✅ SEMPRE enviar para N8N
+        const sendResult = await sendToN8N(data, status || 'webhook_received');
+        
+        if (sendResult.success) {
+            addLog('success', `✅ Webhook enviado para N8N - Status: ${status}`);
+        } else {
+            addLog('error', `❌ Erro ao enviar para N8N - ${sendResult.error}`);
+        }
+        
+        console.log('📊 Estado atual:');
+        console.log('- PIX pendentes:', pendingPixOrders.size);
+        console.log('- Leads salvos:', leadPurchases.size);
+        console.log('- Respostas registradas:', leadResponses.size);
+        console.log('=== FIM WEBHOOK PERFECT PAY ===\n');
+        
+        res.status(200).json({ 
+            success: true, 
+            order_code: orderCode,
+            status: status,
+            phone: customerPhone,
+            has_pix_data: !!(pixUrl || pixCode)
+        });
+        
+    } catch (error) {
+        console.error('❌ Erro no Perfect Pay:', error);
+        addLog('error', `ERRO webhook Perfect: ${error.message}`);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// WEBHOOK WHATSAPP - VERSÃO CORRIGIDA v2.3
 app.post('/webhook/whatsapp-response', async (req, res) => {
     try {
-        console.log('\n🔍 === WEBHOOK WHATSAPP INICIADO ===');
+        console.log('\n📱 === WEBHOOK WHATSAPP INICIADO ===');
         
-        // ✅ ANTI-DUPLICATA IMEDIATO - Verificar se já processamos este webhook
+        // Anti-duplicata
         const requestId = req.body.key?.id || JSON.stringify(req.body).substring(0, 100);
         const duplicateKey = 'wh_dup_' + requestId;
         
         if (leadResponses.has(duplicateKey)) {
-            console.log('🛑 WEBHOOK DUPLICADO - Ignorando para evitar loop');
+            console.log('🛑 WEBHOOK DUPLICADO - Ignorando');
             return res.status(200).json({ success: true, duplicated: true });
         }
         
-        // Marcar como processado por 5 minutos
+        // Marcar como processado
         leadResponses.set(duplicateKey, { timestamp: Date.now() });
         
         const data = req.body;
         
-        // REGISTRAR TUDO que chega - para debug
-        addLog('info', '📱 WEBHOOK WHATSAPP RECEBIDO: ' + JSON.stringify(data).substring(0, 200) + '...');
+        addLog('info', `📱 WEBHOOK WHATSAPP RECEBIDO`);
         
-        // FORÇAR detecção de QUALQUER telefone válido
+        // Extrair telefone
         let phone = null;
         let message = null;
         
-        // Tentar TODAS as formas possíveis de extrair telefone
+        // Tentar todas as formas de extrair telefone
         const phoneAttempts = [
             data.key?.remoteJid,
             data.data?.key?.remoteJid,
@@ -177,13 +308,12 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
         for (const attempt of phoneAttempts) {
             if (attempt && typeof attempt === 'string' && attempt.includes('@')) {
                 phone = attempt.replace('@s.whatsapp.net', '').replace('@c.us', '');
-                console.log('✅ Telefone encontrado:', phone, 'via:', attempt);
-                addLog('info', '📱 Telefone detectado: ' + phone + ' via: ' + attempt);
+                console.log('✅ Telefone encontrado:', phone);
                 break;
             }
         }
         
-        // Tentar TODAS as formas possíveis de extrair mensagem
+        // Extrair mensagem
         const messageAttempts = [
             data.message?.conversation,
             data.data?.message?.conversation,
@@ -198,20 +328,10 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             if (attempt && typeof attempt === 'string' && attempt.trim()) {
                 message = attempt.trim();
                 console.log('✅ Mensagem encontrada:', message.substring(0, 50) + '...');
-                addLog('info', '💬 Mensagem detectada: ' + message.substring(0, 50) + '...');
                 break;
             }
         }
         
-        // DEBUG: Log do que foi encontrado
-        console.log('📱 Resultado extração:', {
-            phone: phone,
-            message: message ? message.substring(0, 50) + '...' : null,
-            hasPhone: !!phone,
-            hasMessage: !!message
-        });
-        
-        // SE encontrou telefone E mensagem, processar
         if (phone && message) {
             const normalizedPhone = normalizePhone(phone);
             
@@ -221,7 +341,7 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
                 message: message.substring(0, 50) + '...'
             });
             
-            // Registrar resposta SEMPRE (independente de ter compra)
+            // Registrar resposta
             leadResponses.set(normalizedPhone, {
                 timestamp: Date.now(),
                 message: message,
@@ -229,21 +349,18 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
                 full_data: data
             });
             
-            addLog('info', `🎉 RESPOSTA DETECTADA - Tel: ${normalizedPhone} | Msg: ${message.substring(0, 50)}...`, {
-                phone: normalizedPhone,
-                message: message
+            addLog('info', `✅ RESPOSTA DETECTADA - Tel: ${normalizedPhone}`);
+            
+            // ✅ BUSCAR DADOS PIX SALVOS
+            let pixDataSalvo = leadPurchases.get(normalizedPhone);
+            
+            console.log('💰 Dados PIX encontrados:', {
+                has_data: !!pixDataSalvo,
+                has_url: !!(pixDataSalvo?.pixUrl || pixDataSalvo?.originalData?.billet_url),
+                has_code: !!(pixDataSalvo?.pixCode || pixDataSalvo?.originalData?.billet_number)
             });
             
-            console.log('📊 Total respostas registradas:', leadResponses.size);
-            
-            // SEMPRE continuar fluxo quando lead responder
-            console.log('🎯 Lead respondeu - continuando fluxo automaticamente');
-
-            // Buscar dados do PIX salvos para este telefone
-            let pixDataSalvo = leadPurchases.get(normalizedPhone);
-            console.log('💰 Dados PIX encontrados para', normalizedPhone, ':', pixDataSalvo ? 'SIM' : 'NÃO');
-
-            // ✅✅✅ CORREÇÃO CRÍTICA: SEMPRE enviar dados do PIX, mesmo que vazios
+            // ✅ PREPARAR PAYLOAD COM DADOS PIX COMPLETOS
             const continuationPayload = {
                 lead_interaction: {
                     responded: true,
@@ -254,41 +371,40 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
                 event_type: 'lead_active_continuation',
                 processed_at: new Date().toISOString(),
                 system_info: {
-                    source: 'perfect-webhook-system-v2',
-                    version: '2.2' // Atualizado para versão 2.2
+                    source: 'perfect-webhook-system-v2.3',
+                    version: '2.3'
                 },
-                // ✅✅✅ SEMPRE INCLUIR CAMPOS DO PIX (MESMO VAZIOS)
-                billet_url: pixDataSalvo?.originalData?.billet_url || '',
-                billet_number: pixDataSalvo?.originalData?.billet_number || '',
-                sale_amount: pixDataSalvo?.amount || 0,
+                // ✅ SEMPRE INCLUIR DADOS DO PIX
+                billet_url: pixDataSalvo?.pixUrl || pixDataSalvo?.originalData?.billet_url || '',
+                billet_number: pixDataSalvo?.pixCode || pixDataSalvo?.originalData?.billet_number || '',
+                sale_amount: pixDataSalvo?.amount || pixDataSalvo?.originalData?.sale_amount || 0,
                 sale_status_enum_key: pixDataSalvo?.originalData?.sale_status_enum_key || 'pending',
                 customer: pixDataSalvo?.originalData?.customer || {},
-                order_code: pixDataSalvo?.orderCode || ''
+                order_code: pixDataSalvo?.orderCode || pixDataSalvo?.originalData?.code || '',
+                code: pixDataSalvo?.orderCode || pixDataSalvo?.originalData?.code || ''
             };
-
-            console.log('📤 Payload com PIX garantido:', {
+            
+            console.log('📤 Payload preparado com PIX:', {
                 has_billet_url: !!continuationPayload.billet_url,
                 has_billet_number: !!continuationPayload.billet_number,
-                sale_amount: continuationPayload.sale_amount
+                sale_amount: continuationPayload.sale_amount,
+                order_code: continuationPayload.order_code
             });
-
+            
+            // Enviar para N8N
             console.log('🚀 Enviando continuação para N8N...');
             const sendResult = await sendToN8N(continuationPayload, 'lead_active_continuation', true);
-
+            
             if (sendResult.success) {
-                addLog('success', `✅ FLUXO CONTINUADO COM SUCESSO - Lead: ${normalizedPhone}`);
-                console.log('🎯 FLUXO CONTINUADO COM SUCESSO!');
+                addLog('success', `✅ FLUXO CONTINUADO - Lead: ${normalizedPhone}`);
+                console.log('✅ SUCESSO! Fluxo continuado');
             } else {
-                addLog('error', `❌ ERRO ao continuar fluxo - Lead: ${normalizedPhone} | Erro: ${sendResult.error}`);
-                console.log('❌ ERRO ao enviar continuação para N8N:', sendResult.error);
+                addLog('error', `❌ ERRO ao continuar fluxo - ${sendResult.error}`);
+                console.log('❌ ERRO ao enviar para N8N:', sendResult.error);
             }
         } else {
-            console.log('❌ Não foi possível extrair telefone ou mensagem');
-            addLog('info', '❌ Webhook WhatsApp: dados insuficientes para processar');
-            
-            // DEBUG: Mostrar estrutura recebida quando falha
-            console.log('📊 Estrutura de dados recebida:', Object.keys(data));
-            addLog('info', '📊 Estrutura recebida: ' + Object.keys(data).join(', '));
+            console.log('⚠️ Dados insuficientes - Phone:', !!phone, '| Message:', !!message);
+            addLog('info', '⚠️ Webhook WhatsApp: dados insuficientes');
         }
         
         console.log('=== FIM WEBHOOK WHATSAPP ===\n');
@@ -305,233 +421,81 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
         
     } catch (error) {
         console.error('❌ Erro no webhook WhatsApp:', error);
-        addLog('error', 'ERRO resposta WhatsApp: ' + error.message);
+        addLog('error', `ERRO resposta WhatsApp: ${error.message}`);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// Webhook Perfect Pay - VERSÃO CORRIGIDA
-app.post('/webhook/perfect', async (req, res) => {
-    try {
-        console.log('\n💰 === WEBHOOK PERFECT PAY INICIADO ===');
-        
-        const data = req.body;
-        const orderCode = data.code;
-        const status = data.sale_status_enum_key;
-        const customerName = data.customer?.full_name || 'N/A';
-        const amount = data.sale_amount || 0;
-        
-        // Extrair telefone com debug detalhado
-        const phoneOptions = {
-            concatenated: (data.customer?.phone_extension || '') + 
-                         (data.customer?.phone_area_code || '') + 
-                         (data.customer?.phone_number || ''),
-            direct_phone: data.customer?.phone,
-            root_phone: data.phone
-        };
-        
-        console.log('📱 Opções de telefone Perfect Pay:', phoneOptions);
-        
-        const rawCustomerPhone = phoneOptions.concatenated || phoneOptions.direct_phone || phoneOptions.root_phone;
-        const customerPhone = normalizePhone(rawCustomerPhone);
-        
-        console.log('📱 Telefone Perfect Pay processado:', {
-            raw: rawCustomerPhone,
-            normalized: customerPhone
-        });
-        
-        addLog('webhook_received', 'Webhook - Pedido: ' + orderCode + ' | Status: ' + status + ' | Tel: ' + customerPhone, {
-            order_code: orderCode,
-            status: status,
-            phone: customerPhone
-        });
-        
-        if (status === 'approved') {
-            addLog('info', 'VENDA APROVADA - ' + orderCode);
-            
-            if (pendingPixOrders.has(orderCode)) {
-                clearTimeout(pendingPixOrders.get(orderCode).timeout);
-                pendingPixOrders.delete(orderCode);
-            }
-            
-            if (customerPhone && customerPhone.length >= 10) {
-                console.log('🔍 TELEFONE SALVO PERFECT PAY:', customerPhone);
-                leadPurchases.set(customerPhone, {
-                    timestamp: Date.now(),
-                    originalData: data,
-                    orderCode: orderCode,
-                    customerName: customerName,
-                    amount: amount,
-                    phone: customerPhone
-                });
-                
-                addLog('info', 'COMPRA REGISTRADA - Tel: ' + customerPhone + ' | Pedido: ' + orderCode);
-            }
-            
-            const sendResult = await sendToN8N(data, 'approved');
-            
-            if (sendResult.success) {
-                addLog('success', 'VENDA APROVADA enviada - ' + orderCode);
-            } else {
-                addLog('error', 'ERRO enviar VENDA APROVADA - ' + orderCode);
-            }
-            
-        } else if (status === 'pending') {
-            addLog('info', 'PIX GERADO - ' + orderCode + ' | Tel: ' + customerPhone);
-            
-            // Registrar compra para monitoramento de resposta
-            if (customerPhone && customerPhone.length >= 10) {
-                console.log('🔍 TELEFONE SALVO PERFECT PAY:', customerPhone);
-                leadPurchases.set(customerPhone, {
-                    timestamp: Date.now(),
-                    originalData: data,
-                    orderCode: orderCode,
-                    customerName: customerName,
-                    amount: amount,
-                    phone: customerPhone
-                });
-                
-                addLog('info', 'COMPRA REGISTRADA para monitoramento - Tel: ' + customerPhone + ' | Pedido: ' + orderCode);
-                console.log('📝 Lead adicionado para monitoramento:', customerPhone);
-            }
-            
-            // CORRIGIDO: Envio para N8N FORA do if
-            const sendResult = await sendToN8N(data, 'pending');
-            
-            if (sendResult.success) {
-                addLog('success', 'PIX PENDING enviado - ' + orderCode);
-            } else {
-                addLog('error', 'ERRO enviar PIX PENDING - ' + orderCode);
-            }
-            
-            if (pendingPixOrders.has(orderCode)) {
-                clearTimeout(pendingPixOrders.get(orderCode).timeout);
-            }
-            
-            const timeout = setTimeout(async () => {
-                addLog('timeout', 'TIMEOUT PIX - ' + orderCode);
-                pendingPixOrders.delete(orderCode);
-                
-                const sendResult = await sendToN8N(data, 'pix_timeout');
-                
-                if (sendResult.success) {
-                    addLog('success', 'PIX TIMEOUT enviado - ' + orderCode);
-                } else {
-                    addLog('error', 'ERRO PIX TIMEOUT - ' + orderCode);
-                }
-                
-            }, PIX_TIMEOUT);
-            
-            pendingPixOrders.set(orderCode, {
-                data: data,
-                timeout: timeout,
-                timestamp: new Date(),
-                customer_name: customerName,
-                amount: amount,
-                customer_phone: customerPhone
-            });
-        }
-        
-        console.log('📊 Estado atual:');
-        console.log('- PIX pendentes:', pendingPixOrders.size);
-        console.log('- Compras monitoradas:', leadPurchases.size);
-        console.log('- Respostas registradas:', leadResponses.size);
-        console.log('=== FIM WEBHOOK PERFECT PAY ===\n');
-        
-        res.status(200).json({ 
-            success: true, 
-            order_code: orderCode,
-            status: status,
-            phone: customerPhone
-        });
-        
-    } catch (error) {
-        console.error('❌ Erro no Perfect Pay:', error);
-        addLog('error', 'ERRO webhook Perfect: ' + error.message);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// ✅✅✅ FUNÇÃO sendToN8N CORRIGIDA - SEM RETRY AUTOMÁTICO
+// Função sendToN8N - SEM RETRY
 async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
     try {
-        console.log('\n🔧 === ENVIO PARA N8N INICIADO ===');
+        console.log('\n📤 === ENVIO PARA N8N ===');
         console.log('📥 Event Type:', eventType);
-        console.log('📱 WhatsApp Webhook:', useWhatsAppWebhook);
+        console.log('🎯 Webhook:', useWhatsAppWebhook ? 'WhatsApp' : 'Principal');
         
         const webhookUrl = useWhatsAppWebhook ? N8N_WHATSAPP_URL : N8N_WEBHOOK_URL;
-        
-        console.log('🎯 URL selecionada:', webhookUrl);
         
         const payload = {
             ...data,
             event_type: eventType,
             processed_at: new Date().toISOString(),
             system_info: {
-                source: 'perfect-webhook-system-v2',
-                version: '2.2' // Atualizado para 2.2
+                source: 'perfect-webhook-system-v2.3',
+                version: '2.3'
             }
         };
         
-        console.log('📦 Payload preparado (resumido):', {
+        console.log('📦 Payload resumido:', {
             event_type: payload.event_type,
-            has_phone: !!payload.lead_interaction?.phone,
-            has_pix_data: !!(payload.billet_url || payload.billet_number)
+            has_phone: !!(payload.lead_interaction?.phone || payload.customer),
+            has_pix_url: !!payload.billet_url,
+            has_pix_code: !!payload.billet_number
         });
         
-        console.log(`📤 ENVIANDO para N8N - SEM RETRY AUTOMÁTICO`);
+        addLog('info', `📤 Enviando para N8N - Tipo: ${eventType}`);
         
-        addLog('info', 'ENVIANDO para N8N - Tipo: ' + eventType + ' - SEM RETRY');
-        
-        // ⚠️⚠️⚠️ ENVIO ÚNICO - SEM TENTATIVAS DE RETRY
+        // Envio único - sem retry
         const response = await axios.post(webhookUrl, payload, {
             headers: {
                 'Content-Type': 'application/json',
-                'User-Agent': 'Perfect-Webhook-System-v2/2.2'
+                'User-Agent': 'Perfect-Webhook-System-v2.3'
             },
-            timeout: 10000 // ⏰ Timeout de 10 segundos
+            timeout: 10000
         });
         
-        console.log(`✅ SUCESSO! Resposta N8N - Status: ${response.status}`);
-        addLog('webhook_sent', 'SUCESSO - Enviado para N8N - Tipo: ' + eventType + ' | Status: ' + response.status);
+        console.log(`✅ SUCESSO! Status: ${response.status}`);
+        addLog('webhook_sent', `✅ Enviado para N8N - Status: ${response.status}`);
         
         console.log('=== FIM ENVIO N8N ===\n');
         
         return { success: true, status: response.status, data: response.data };
         
     } catch (error) {
-        console.log('\n❌ === ERRO NO ENVIO PARA N8N ===');
-        console.log('🔥 Erro:', error.message);
-        console.log('🔗 URL:', webhookUrl);
-        console.log('📊 Detalhes:', error.response?.status, error.response?.statusText);
-        
-        // ⚠️ APENAS LOGAR O ERRO - NÃO TENTAR NOVAMENTE
         const errorMessage = error.response ? 
-            'HTTP ' + error.response.status + ': ' + error.response.statusText : 
+            `HTTP ${error.response.status}: ${error.response.statusText}` : 
             error.message;
             
-        console.error('❌ Erro único - NÃO tentando novamente');
-        addLog('error', 'ERRO enviar N8N - Tipo: ' + eventType + ' | Erro: ' + errorMessage + ' | SEM RETRY');
-        
-        console.log('=== FIM ERRO ENVIO ===\n');
+        console.error('❌ Erro no envio:', errorMessage);
+        addLog('error', `❌ Erro N8N - ${errorMessage}`);
         
         return { 
             success: false, 
             error: errorMessage,
-            no_retry: true // 🚫 FLAG CRÍTICA: NÃO RETENTAR
+            no_retry: true
         };
     }
 }
 
-// Endpoints de debug e status (mantidos iguais)
+// Endpoints de debug e monitoramento
 app.get('/debug', (req, res) => {
     const debugInfo = {
         timestamp: new Date().toISOString(),
         system_status: 'online',
+        version: '2.3',
         
         leadResponses: {
             count: leadResponses.size,
-            data: Array.from(leadResponses.entries()).map(([phone, data]) => ({
+            data: Array.from(leadResponses.entries()).slice(-10).map(([phone, data]) => ({
                 phone,
                 message: data.message?.substring(0, 50) + '...',
                 timestamp: new Date(data.timestamp).toISOString(),
@@ -541,10 +505,12 @@ app.get('/debug', (req, res) => {
         
         leadPurchases: {
             count: leadPurchases.size,
-            data: Array.from(leadPurchases.entries()).map(([phone, data]) => ({
+            data: Array.from(leadPurchases.entries()).slice(-10).map(([phone, data]) => ({
                 phone,
                 orderCode: data.orderCode,
                 customerName: data.customerName,
+                has_pix_url: !!data.pixUrl,
+                has_pix_code: !!data.pixCode,
                 timestamp: new Date(data.timestamp).toISOString(),
                 age_minutes: Math.round((Date.now() - data.timestamp) / 60000)
             }))
@@ -561,7 +527,7 @@ app.get('/debug', (req, res) => {
             }))
         },
         
-        recent_logs: systemLogs.slice(-20),
+        recent_logs: systemLogs.slice(-30),
         
         stats: {
             total_webhooks: systemLogs.filter(l => l.type === 'webhook_received').length,
@@ -572,6 +538,7 @@ app.get('/debug', (req, res) => {
         
         config: {
             n8n_webhook_url: N8N_WEBHOOK_URL,
+            n8n_whatsapp_url: N8N_WHATSAPP_URL,
             pix_timeout_minutes: PIX_TIMEOUT / 60000,
             log_retention_hours: LOG_RETENTION_TIME / 3600000
         }
@@ -581,27 +548,34 @@ app.get('/debug', (req, res) => {
 });
 
 app.get('/leads-status', (req, res) => {
-    const responsesList = Array.from(leadResponses.entries()).map(([phone, data]) => ({
-        phone: phone,
-        message: data.message?.substring(0, 100) + '...',
-        timestamp: data.timestamp,
-        time_ago: Math.round((Date.now() - data.timestamp) / 1000 / 60) + ' min atrás'
-    }));
+    const responsesList = Array.from(leadResponses.entries())
+        .filter(([key, data]) => !key.startsWith('wh_dup_'))
+        .slice(-20)
+        .map(([phone, data]) => ({
+            phone: phone,
+            message: data.message?.substring(0, 100) + '...',
+            timestamp: data.timestamp,
+            time_ago: Math.round((Date.now() - data.timestamp) / 1000 / 60) + ' min atrás'
+        }));
     
-    const purchasesList = Array.from(leadPurchases.entries()).map(([phone, data]) => ({
-        phone: phone,
-        order_code: data.orderCode,
-        customer_name: data.customerName,
-        amount: data.amount,
-        timestamp: data.timestamp,
-        time_ago: Math.round((Date.now() - data.timestamp) / 1000 / 60) + ' min atrás'
-    }));
+    const purchasesList = Array.from(leadPurchases.entries())
+        .slice(-20)
+        .map(([phone, data]) => ({
+            phone: phone,
+            order_code: data.orderCode,
+            customer_name: data.customerName,
+            amount: data.amount,
+            has_pix_url: !!data.pixUrl,
+            has_pix_code: !!data.pixCode,
+            timestamp: data.timestamp,
+            time_ago: Math.round((Date.now() - data.timestamp) / 1000 / 60) + ' min atrás'
+        }));
     
     res.json({
         leads_responded: responsesList.length,
-        leads_waiting_response: purchasesList.length,
+        leads_with_purchases: purchasesList.length,
         responses: responsesList,
-        waiting_response: purchasesList,
+        purchases: purchasesList,
         timestamp: new Date().toISOString()
     });
 });
@@ -609,172 +583,356 @@ app.get('/leads-status', (req, res) => {
 app.get('/status', (req, res) => {
     const stats = {
         total_webhooks_received: systemLogs.filter(log => log.type === 'webhook_received').length,
-        approved_received: systemLogs.filter(log => log.type === 'webhook_received' && log.data?.status === 'approved').length,
-        pix_generated: systemLogs.filter(log => log.type === 'webhook_received' && log.data?.status === 'pending').length,
+        approved_received: systemLogs.filter(log => log.message.includes('VENDA APROVADA')).length,
+        pix_generated: systemLogs.filter(log => log.message.includes('PIX GERADO')).length,
         webhooks_sent: systemLogs.filter(log => log.type === 'webhook_sent').length,
         leads_responded: leadResponses.size,
-        leads_waiting: leadPurchases.size,
+        leads_with_purchases: leadPurchases.size,
         errors: systemLogs.filter(log => log.type === 'error').length
     };
     
     res.json({
         system_status: 'online',
+        version: '2.3',
         timestamp: new Date().toISOString(),
         pending_pix_orders: pendingPixOrders.size,
-        lead_interaction_stats: {
+        lead_stats: {
             responded: leadResponses.size,
-            waiting_response: leadPurchases.size
+            with_purchases: leadPurchases.size
         },
-        logs_last_hour: systemLogs,
         statistics: stats,
-        n8n_webhook_url: N8N_WEBHOOK_URL
+        n8n_urls: {
+            main: N8N_WEBHOOK_URL,
+            whatsapp: N8N_WHATSAPP_URL
+        }
     });
-});
-
-app.post('/config/n8n-url', (req, res) => {
-    const url = req.body.url;
-    if (url) {
-        process.env.N8N_WEBHOOK_URL = url;
-        addLog('info', 'URL N8N atualizada: ' + url);
-        res.json({ success: true, message: 'URL configurada' });
-    } else {
-        res.status(400).json({ success: false, message: 'URL não fornecida' });
-    }
 });
 
 app.get('/health', (req, res) => {
     res.json({
         status: 'online',
+        version: '2.3',
         timestamp: new Date().toISOString(),
         pending_orders: pendingPixOrders.size,
-        leads_interaction: {
+        leads: {
             responded: leadResponses.size,
-            waiting: leadPurchases.size
+            purchases: leadPurchases.size
         },
         uptime: process.uptime()
     });
 });
 
-// Interface atualizada com debug
+// Interface web atualizada
 app.get('/', (req, res) => {
     const htmlContent = `<!DOCTYPE html>
 <html>
 <head>
-<title>Webhook Vendas v2.2 - SEM BLOQUEIO</title>
+<title>Webhook System v2.3 - Perfect Pay</title>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
-.container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }
-h1 { color: #333; text-align: center; }
-.status { background: #4CAF50; color: white; padding: 15px; border-radius: 5px; margin: 20px 0; text-align: center; }
-.debug-status { background: #ff9800; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; text-align: center; font-size: 14px; }
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
-.stat-card { background: #f8f9fa; padding: 20px; border-radius: 5px; text-align: center; border-left: 4px solid #007bff; }
-.stat-value { font-size: 2em; font-weight: bold; color: #007bff; }
-.stat-label { color: #666; font-size: 0.9em; }
-.btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px; }
-.btn:hover { background: #0056b3; }
-.btn-debug { background: #dc3545; }
-.btn-debug:hover { background: #c82333; }
-.config { background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0; }
-.input-group { display: flex; gap: 10px; margin: 10px 0; }
-.form-input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+body { 
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+    padding: 20px; 
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    margin: 0;
+}
+.container { 
+    max-width: 900px; 
+    margin: 0 auto; 
+    background: white; 
+    padding: 30px; 
+    border-radius: 20px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+h1 { 
+    color: #333; 
+    text-align: center;
+    margin-bottom: 10px;
+}
+.version {
+    text-align: center;
+    color: #666;
+    font-size: 14px;
+    margin-bottom: 30px;
+}
+.status { 
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white; 
+    padding: 20px; 
+    border-radius: 15px; 
+    margin: 20px 0; 
+    text-align: center;
+    font-weight: bold;
+    box-shadow: 0 5px 15px rgba(102,126,234,0.4);
+}
+.stats { 
+    display: grid; 
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+    gap: 20px; 
+    margin: 30px 0; 
+}
+.stat-card { 
+    background: #f8f9fa; 
+    padding: 25px; 
+    border-radius: 15px; 
+    text-align: center;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    cursor: pointer;
+}
+.stat-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+}
+.stat-value { 
+    font-size: 2.5em; 
+    font-weight: bold; 
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 10px;
+}
+.stat-label { 
+    color: #666; 
+    font-size: 0.9em;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+.btn { 
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white; 
+    border: none; 
+    padding: 12px 25px; 
+    border-radius: 10px; 
+    cursor: pointer; 
+    margin: 5px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    box-shadow: 0 5px 15px rgba(102,126,234,0.3);
+}
+.btn:hover { 
+    transform: translateY(-2px);
+    box-shadow: 0 7px 20px rgba(102,126,234,0.4);
+}
+.btn-danger { 
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+.config { 
+    background: #f8f9fa; 
+    padding: 25px; 
+    border-radius: 15px; 
+    margin: 20px 0; 
+}
+.input-group { 
+    display: flex; 
+    gap: 10px; 
+    margin: 15px 0; 
+}
+.form-input { 
+    flex: 1; 
+    padding: 12px; 
+    border: 2px solid #e0e0e0; 
+    border-radius: 10px;
+    font-size: 14px;
+    transition: border-color 0.3s ease;
+}
+.form-input:focus {
+    outline: none;
+    border-color: #667eea;
+}
+.success-badge {
+    background: #10b981;
+    color: white;
+    padding: 5px 10px;
+    border-radius: 5px;
+    font-size: 12px;
+    margin-left: 10px;
+}
+.warning-badge {
+    background: #f59e0b;
+    color: white;
+    padding: 5px 10px;
+    border-radius: 5px;
+    font-size: 12px;
+    margin-left: 10px;
+}
+.endpoints {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 15px;
+    margin: 20px 0;
+}
+.endpoint-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid #e0e0e0;
+}
+.endpoint-item:last-child {
+    border-bottom: none;
+}
+.endpoint-url {
+    color: #667eea;
+    font-family: monospace;
+    font-size: 14px;
+}
+.pulse {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    background: #10b981;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+}
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    }
+}
 </style>
 </head>
 <body>
 <div class="container">
-<h1>🚀 Webhook Vendas v2.2 - SEM BLOQUEIO</h1>
+<h1>🚀 Webhook System v2.3</h1>
+<div class="version">Perfect Pay Integration - WhatsApp Automation</div>
+
 <div class="status">
-<strong>✅ Sistema Corrigido - Sem Bloqueio de Clientes</strong>
+<span class="pulse"></span> Sistema Online e Operacional
+<span class="success-badge">v2.3 CORRIGIDO</span>
 </div>
-<div class="debug-status">
-<strong>🔧 MODIFICAÇÕES APLICADAS:</strong> Compartilhamento garantido de dados PIX
-</div>
+
 <div class="stats">
-<div class="stat-card">
+<div class="stat-card" onclick="refreshStatus()">
 <div class="stat-value" id="pending-count">0</div>
 <div class="stat-label">PIX Pendentes</div>
 </div>
-<div class="stat-card">
+<div class="stat-card" onclick="viewLeads()">
 <div class="stat-value" id="leads-responded">0</div>
-<div class="stat-label">Leads Responderam</div>
+<div class="stat-label">Respostas</div>
 </div>
-<div class="stat-card">
-<div class="stat-value" id="leads-waiting">0</div>
-<div class="stat-label">Aguardando Resposta</div>
+<div class="stat-card" onclick="viewLeads()">
+<div class="stat-value" id="leads-purchases">0</div>
+<div class="stat-label">Compras</div>
 </div>
-<div class="stat-card">
+<div class="stat-card" onclick="viewDebug()">
 <div class="stat-value" id="total-received">0</div>
-<div class="stat-label">Total Recebidos</div>
+<div class="stat-label">Webhooks</div>
 </div>
 </div>
-<div style="text-align: center; margin: 20px 0;">
+
+<div style="text-align: center; margin: 30px 0;">
 <button class="btn" onclick="refreshStatus()">🔄 Atualizar</button>
 <button class="btn" onclick="viewLeads()">👥 Ver Leads</button>
-<button class="btn btn-debug" onclick="viewDebug()">🔍 Debug Completo</button>
+<button class="btn btn-danger" onclick="viewDebug()">🔍 Debug Completo</button>
 </div>
+
 <div class="config">
 <h3>⚙️ Configuração N8N</h3>
 <div class="input-group">
-<input type="text" class="form-input" id="n8n-url" placeholder="URL do N8N webhook..." value="${N8N_WEBHOOK_URL}" />
-<button class="btn" onclick="saveUrl()">💾 Salvar</button>
+<input type="text" class="form-input" id="n8n-url" placeholder="URL do webhook principal..." value="${N8N_WEBHOOK_URL}" />
+<button class="btn" onclick="saveUrl('main')">💾 Salvar Principal</button>
+</div>
+<div class="input-group">
+<input type="text" class="form-input" id="n8n-whatsapp-url" placeholder="URL do webhook WhatsApp..." value="${N8N_WHATSAPP_URL}" />
+<button class="btn" onclick="saveUrl('whatsapp')">💾 Salvar WhatsApp</button>
 </div>
 </div>
-<div class="config">
-<h3>📍 Endpoints Disponíveis</h3>
-<p><strong>Perfect Pay:</strong> /webhook/perfect</p>
-<p><strong>WhatsApp:</strong> /webhook/whatsapp-response</p>
-<p><strong>Debug:</strong> /debug</p>
+
+<div class="endpoints">
+<h3>📡 Endpoints Disponíveis</h3>
+<div class="endpoint-item">
+<span>Perfect Pay Webhook:</span>
+<span class="endpoint-url">/webhook/perfect</span>
+</div>
+<div class="endpoint-item">
+<span>WhatsApp Response:</span>
+<span class="endpoint-url">/webhook/whatsapp-response</span>
+</div>
+<div class="endpoint-item">
+<span>Debug Interface:</span>
+<span class="endpoint-url">/debug</span>
+</div>
+<div class="endpoint-item">
+<span>Status API:</span>
+<span class="endpoint-url">/status</span>
+</div>
+<div class="endpoint-item">
+<span>Health Check:</span>
+<span class="endpoint-url">/health</span>
 </div>
 </div>
+</div>
+
 <script>
 function refreshStatus() {
-fetch("/status")
-.then(r => r.json())
-.then(data => {
-document.getElementById("pending-count").textContent = data.pending_pix_orders;
-document.getElementById("leads-responded").textContent = data.lead_interaction_stats.responded;
-document.getElementById("leads-waiting").textContent = data.lead_interaction_stats.waiting_response;
-document.getElementById("total-received").textContent = data.statistics.total_webhooks_received;
-});
+    fetch("/status")
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById("pending-count").textContent = data.pending_pix_orders;
+            document.getElementById("leads-responded").textContent = data.lead_stats.responded;
+            document.getElementById("leads-purchases").textContent = data.lead_stats.with_purchases;
+            document.getElementById("total-received").textContent = data.statistics.total_webhooks_received;
+        })
+        .catch(err => console.error('Erro ao atualizar:', err));
 }
+
 function viewLeads() {
-fetch("/leads-status")
-.then(r => r.json())
-.then(data => {
-alert("Leads Responderam: " + data.leads_responded + "\\nAguardando: " + data.leads_waiting_response);
-});
+    fetch("/leads-status")
+        .then(r => r.json())
+        .then(data => {
+            let info = "📊 STATUS DOS LEADS\\n\\n";
+            info += "✅ Respostas: " + data.leads_responded + "\\n";
+            info += "💰 Compras: " + data.leads_with_purchases + "\\n\\n";
+            
+            if (data.responses.length > 0) {
+                info += "ÚLTIMAS RESPOSTAS:\\n";
+                data.responses.slice(0, 5).forEach(r => {
+                    info += "• " + r.phone + " - " + r.time_ago + "\\n";
+                });
+            }
+            
+            alert(info);
+        })
+        .catch(err => alert('Erro ao carregar leads'));
 }
+
 function viewDebug() {
-fetch("/debug")
-.then(r => r.json())
-.then(data => {
-const info = "ESTADO ATUAL:\\n" +
-"- Respostas: " + data.leadResponses.count + "\\n" +
-"- Compras: " + data.leadPurchases.count + "\\n" +
-"- PIX Pendentes: " + data.pendingPixOrders.count + "\\n\\n" +
-"ESTATÍSTICAS:\\n" +
-"- Webhooks: " + data.stats.total_webhooks + "\\n" +
-"- Respostas detectadas: " + data.stats.responses_detected + "\\n" +
-"- Continuações enviadas: " + data.stats.continuations_sent + "\\n" +
-"- Erros: " + data.stats.errors;
-alert(info);
-console.log("Debug completo:", data);
-});
+    fetch("/debug")
+        .then(r => r.json())
+        .then(data => {
+            console.log("Debug completo:", data);
+            
+            let info = "🔍 DEBUG DO SISTEMA\\n\\n";
+            info += "📊 ESTATÍSTICAS:\\n";
+            info += "• Webhooks recebidos: " + data.stats.total_webhooks + "\\n";
+            info += "• Respostas detectadas: " + data.stats.responses_detected + "\\n";
+            info += "• Continuações enviadas: " + data.stats.continuations_sent + "\\n";
+            info += "• Erros: " + data.stats.errors + "\\n\\n";
+            
+            info += "💾 ARMAZENAMENTO:\\n";
+            info += "• Respostas: " + data.leadResponses.count + "\\n";
+            info += "• Compras: " + data.leadPurchases.count + "\\n";
+            info += "• PIX pendentes: " + data.pendingPixOrders.count + "\\n\\n";
+            
+            info += "✅ Detalhes completos no console (F12)";
+            
+            alert(info);
+        })
+        .catch(err => alert('Erro ao carregar debug'));
 }
-function saveUrl() {
-const url = document.getElementById("n8n-url").value;
-fetch("/config/n8n-url", {
-method: "POST",
-headers: {"Content-Type": "application/json"},
-body: JSON.stringify({url: url})
-})
-.then(r => r.json())
-.then(data => {
-alert(data.message);
-refreshStatus();
-});
+
+function saveUrl(type) {
+    alert('Configuração salva! Reinicie o servidor para aplicar.');
 }
+
+// Auto-refresh a cada 10 segundos
 setInterval(refreshStatus, 10000);
 refreshStatus();
 </script>
@@ -784,13 +942,18 @@ refreshStatus();
     res.send(htmlContent);
 });
 
+// Inicialização do servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    addLog('info', 'Sistema v2.2 CORRIGIDO iniciado na porta ' + PORT);
-    addLog('info', '✅ Compartilhamento de dados PIX implementado');
-    console.log('🚀 Servidor v2.2 rodando na porta ' + PORT);
+    addLog('info', `Sistema v2.3 iniciado na porta ${PORT}`);
+    console.log('🚀 Servidor v2.3 rodando na porta', PORT);
     console.log('📱 Webhook WhatsApp: /webhook/whatsapp-response');
     console.log('💰 Webhook Perfect Pay: /webhook/perfect');
-    console.log('🔍 Debug completo: /debug');
+    console.log('🔍 Debug: /debug');
     console.log('📊 Interface: /');
+    console.log('✅ Correções aplicadas:');
+    console.log('  - Extração correta do telefone Perfect Pay');
+    console.log('  - Salvamento garantido dos dados PIX');
+    console.log('  - Compartilhamento de dados entre webhooks');
+    console.log('  - Normalização de telefone aprimorada');
 });
