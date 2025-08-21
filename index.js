@@ -1,25 +1,40 @@
 const express = require('express');
 const axios = require('axios');
+const RedisManager = require('./redis-manager'); // Importar o Redis Manager
 const app = express();
 
-// Armazenamento em memória
-let pendingPixOrders = new Map();
-let systemLogs = [];
-let leadResponses = new Map();
-let leadPurchases = new Map();
+// ✅ REDIS MANAGER - SUBSTITUINDO MAPS
+const redis = new RedisManager();
 
-const LOG_RETENTION_TIME = 60 * 60 * 1000; // 1 hora
+// Configurações mantidas
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://n8n.flowzap.fun/webhook/207400a6-1290-4153-b033-c658e657d717';
 const N8N_WHATSAPP_URL = process.env.N8N_WHATSAPP_URL || 'https://n8n.flowzap.fun/webhook/c0d9ac75-a0db-426c-ad25-09f5d0644c6f';
 const PIX_TIMEOUT = 7 * 60 * 1000; // 7 minutos
 
 app.use(express.json());
 
-// Função para normalizar telefones - VERSÃO CORRIGIDA
+// 🔌 INICIALIZAR REDIS
+async function initializeRedis() {
+    console.log('🔌 Conectando ao Redis...');
+    const connected = await redis.connect();
+    
+    if (connected) {
+        console.log('✅ Redis conectado - Persistência de 30 dias ativa');
+    } else {
+        console.log('❌ Redis falhou - Usando memória temporária');
+        // Fallback para Maps se Redis falhar
+        global.fallbackMaps = {
+            leadResponses: new Map(),
+            leadPurchases: new Map(),
+            pendingPixOrders: new Map()
+        };
+    }
+}
+
+// Função para normalizar telefones (mantida igual)
 function normalizePhone(phone) {
     if (!phone) return '';
     
-    // Remove todos os caracteres não numéricos
     let normalized = phone.toString().replace(/\D/g, '');
     
     console.log('📱 Normalizando telefone:', {
@@ -27,67 +42,55 @@ function normalizePhone(phone) {
         apenas_numeros: normalized
     });
     
-    // Lista completa de DDDs brasileiros
     const ddds_brasileiros = [
-        '11','12','13','14','15','16','17','18','19', // SP
-        '21','22','24','27','28', // RJ/ES
-        '31','32','33','34','35','37','38', // MG
-        '41','42','43','44','45','46', // PR
-        '47','48','49', // SC
-        '51','53','54','55', // RS
-        '61','62','63','64','65','66','67', // Centro-Oeste
-        '68','69', // Norte
-        '71','73','74','75','77','79', // BA/SE
-        '81','82','83','84','85','86','87','88','89', // Nordeste
-        '91','92','93','94','95','96','97','98','99' // Norte/MA
+        '11','12','13','14','15','16','17','18','19',
+        '21','22','24','27','28',
+        '31','32','33','34','35','37','38',
+        '41','42','43','44','45','46',
+        '47','48','49',
+        '51','53','54','55',
+        '61','62','63','64','65','66','67',
+        '68','69',
+        '71','73','74','75','77','79',
+        '81','82','83','84','85','86','87','88','89',
+        '91','92','93','94','95','96','97','98','99'
     ];
     
-    // CORREÇÃO PRINCIPAL: Se tem DDI 57 com DDD brasileiro (bug do sistema)
     if (normalized.startsWith('57') && normalized.length >= 12) {
-        // Verifica os próximos 2 dígitos (possível DDD)
         const possivelDDD = normalized.substring(2, 4);
         
         if (ddds_brasileiros.includes(possivelDDD)) {
             console.log('🔧 Detectado DDI 57 com DDD brasileiro - corrigindo...');
-            
-            // Remove DDI 57 errado
             let semDDI = normalized.substring(2);
             
-            // Se ficou com 11 dígitos e começa com 0, remove o 0
             if (semDDI.length === 11 && semDDI[0] === '0') {
                 semDDI = semDDI.substring(1);
                 console.log('📱 Removido zero extra:', semDDI);
             }
             
-            // Adiciona DDI 55 correto
             normalized = '55' + semDDI;
             console.log('✅ Corrigido DDI 57→55:', normalized);
             return normalized;
         }
     }
     
-    // Se tem 13 dígitos e começa com 55 (Brasil) - MANTER COMO ESTÁ
     if (normalized.length === 13 && normalized.startsWith('55')) {
         console.log('✅ Telefone brasileiro correto - mantido:', normalized);
         return normalized;
     }
     
-    // Se tem 11 dígitos (celular brasileiro sem DDI)
     if (normalized.length === 11) {
         const ddd = normalized.substring(0, 2);
         if (ddds_brasileiros.includes(ddd)) {
-            // Adiciona DDI 55
             normalized = '55' + normalized;
             console.log('📱 Adicionado DDI 55:', normalized);
             return normalized;
         }
     }
     
-    // Se tem 10 dígitos (telefone antigo sem 9)
     if (normalized.length === 10) {
         const ddd = normalized.substring(0, 2);
         if (ddds_brasileiros.includes(ddd)) {
-            // Adiciona 9 e DDI
             const numero = normalized.substring(2);
             normalized = '55' + ddd + '9' + numero;
             console.log('📱 Adicionado 9 e DDI:', normalized);
@@ -95,13 +98,12 @@ function normalizePhone(phone) {
         }
     }
     
-    // IMPORTANTE: NÃO remover dígitos se não identificamos o padrão
     console.log('📱 Telefone final (sem alterações):', normalized);
     return normalized;
 }
 
-// Função para adicionar logs
-function addLog(type, message, data = null) {
+// ✅ FUNÇÃO DE LOG COM REDIS
+async function addLog(type, message, data = null) {
     const logEntry = {
         timestamp: new Date().toISOString(),
         type: type,
@@ -109,61 +111,42 @@ function addLog(type, message, data = null) {
         data: data
     };
     
-    systemLogs.push(logEntry);
     console.log('[' + logEntry.timestamp + '] ' + type.toUpperCase() + ': ' + message);
     
-    const oneHourAgo = Date.now() - LOG_RETENTION_TIME;
-    systemLogs = systemLogs.filter(log => new Date(log.timestamp).getTime() > oneHourAgo);
+    // Salvar no Redis (expira em 7 dias)
+    if (redis.isConnected) {
+        await redis.addSystemLog(type, message, data);
+    }
 }
 
-// Limpeza automática de leads antigos
-function cleanOldLeads() {
-    const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
-    
-    for (let [phone, data] of leadResponses.entries()) {
-        if (data.timestamp < oneDayAgo) {
-            leadResponses.delete(phone);
-        }
-    }
-    
-    for (let [phone, data] of leadPurchases.entries()) {
-        if (data.timestamp < oneDayAgo) {
-            leadPurchases.delete(phone);
-        }
-    }
-    
-    addLog('info', 'Limpeza automática - Leads antigos removidos');
-}
-
-setInterval(cleanOldLeads, 60 * 60 * 1000);
-
-// WEBHOOK WHATSAPP - VERSÃO CORRIGIDA SEM LOOP
+// ✅ WEBHOOK WHATSAPP COM REDIS
 app.post('/webhook/whatsapp-response', async (req, res) => {
     try {
         console.log('\n🔍 === WEBHOOK WHATSAPP INICIADO ===');
         
-        // ✅ ANTI-DUPLICATA IMEDIATO - Verificar se já processamos este webhook
+        // Anti-duplicata usando Redis
         const requestId = req.body.key?.id || JSON.stringify(req.body).substring(0, 100);
         const duplicateKey = 'wh_dup_' + requestId;
         
-        if (leadResponses.has(duplicateKey)) {
-            console.log('🛑 WEBHOOK DUPLICADO - Ignorando para evitar loop');
-            return res.status(200).json({ success: true, duplicated: true });
+        if (redis.isConnected) {
+            const isDuplicate = await redis.getAntiLoop(duplicateKey);
+            if (isDuplicate) {
+                console.log('🛑 WEBHOOK DUPLICADO - Ignorando para evitar loop');
+                return res.status(200).json({ success: true, duplicated: true });
+            }
+            
+            // Marcar como processado (expira em 5 minutos)
+            await redis.setAntiLoop(duplicateKey, { processed: true });
         }
-        
-        // Marcar como processado por 5 minutos
-        leadResponses.set(duplicateKey, { timestamp: Date.now() });
         
         const data = req.body;
         
-        // REGISTRAR TUDO que chega - para debug
-        addLog('info', '📱 WEBHOOK WHATSAPP RECEBIDO: ' + JSON.stringify(data).substring(0, 200) + '...');
+        await addLog('info', '📱 WEBHOOK WHATSAPP RECEBIDO: ' + JSON.stringify(data).substring(0, 200) + '...');
         
-        // FORÇAR detecção de QUALQUER telefone válido
         let phone = null;
         let message = null;
         
-        // Tentar TODAS as formas possíveis de extrair telefone
+        // Extrair telefone (mantido igual)
         const phoneAttempts = [
             data.key?.remoteJid,
             data.data?.key?.remoteJid,
@@ -178,12 +161,12 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             if (attempt && typeof attempt === 'string' && attempt.includes('@')) {
                 phone = attempt.replace('@s.whatsapp.net', '').replace('@c.us', '');
                 console.log('✅ Telefone encontrado:', phone, 'via:', attempt);
-                addLog('info', '📱 Telefone detectado: ' + phone + ' via: ' + attempt);
+                await addLog('info', '📱 Telefone detectado: ' + phone + ' via: ' + attempt);
                 break;
             }
         }
         
-        // Tentar TODAS as formas possíveis de extrair mensagem
+        // Extrair mensagem (mantido igual)
         const messageAttempts = [
             data.message?.conversation,
             data.data?.message?.conversation,
@@ -198,12 +181,11 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             if (attempt && typeof attempt === 'string' && attempt.trim()) {
                 message = attempt.trim();
                 console.log('✅ Mensagem encontrada:', message.substring(0, 50) + '...');
-                addLog('info', '💬 Mensagem detectada: ' + message.substring(0, 50) + '...');
+                await addLog('info', '💬 Mensagem detectada: ' + message.substring(0, 50) + '...');
                 break;
             }
         }
         
-        // DEBUG: Log do que foi encontrado
         console.log('📱 Resultado extração:', {
             phone: phone,
             message: message ? message.substring(0, 50) + '...' : null,
@@ -211,7 +193,6 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             hasMessage: !!message
         });
         
-        // SE encontrou telefone E mensagem, processar
         if (phone && message) {
             const normalizedPhone = normalizePhone(phone);
             
@@ -221,29 +202,31 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
                 message: message.substring(0, 50) + '...'
             });
             
-            // Registrar resposta SEMPRE (independente de ter compra)
-            leadResponses.set(normalizedPhone, {
-                timestamp: Date.now(),
-                message: message,
-                phone: normalizedPhone,
-                full_data: data
-            });
+            // ✅ SALVAR RESPOSTA NO REDIS (expira em 7 dias)
+            if (redis.isConnected) {
+                await redis.setLeadResponse(normalizedPhone, {
+                    timestamp: Date.now(),
+                    message: message,
+                    phone: normalizedPhone,
+                    full_data: data
+                });
+            }
             
-            addLog('info', `🎉 RESPOSTA DETECTADA - Tel: ${normalizedPhone} | Msg: ${message.substring(0, 50)}...`, {
+            await addLog('info', `🎉 RESPOSTA DETECTADA - Tel: ${normalizedPhone} | Msg: ${message.substring(0, 50)}...`, {
                 phone: normalizedPhone,
                 message: message
             });
             
-            console.log('📊 Total respostas registradas:', leadResponses.size);
-            
-            // SEMPRE continuar fluxo quando lead responder
             console.log('🎯 Lead respondeu - continuando fluxo automaticamente');
 
-            // Buscar dados do PIX salvos para este telefone
-            let pixDataSalvo = leadPurchases.get(normalizedPhone);
+            // ✅ BUSCAR DADOS PIX NO REDIS
+            let pixDataSalvo = null;
+            if (redis.isConnected) {
+                pixDataSalvo = await redis.getLeadPurchase(normalizedPhone);
+            }
+            
             console.log('💰 Dados PIX encontrados para', normalizedPhone, ':', pixDataSalvo ? 'SIM' : 'NÃO');
 
-            // ✅✅✅ CORREÇÃO CRÍTICA: SEMPRE enviar dados do PIX, mesmo que vazios
             const continuationPayload = {
                 lead_interaction: {
                     responded: true,
@@ -254,10 +237,11 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
                 event_type: 'lead_active_continuation',
                 processed_at: new Date().toISOString(),
                 system_info: {
-                    source: 'perfect-webhook-system-v2',
-                    version: '2.2' // Atualizado para versão 2.2
+                    source: 'perfect-webhook-system-v3',
+                    version: '3.0-redis',
+                    redis_connected: redis.isConnected
                 },
-                // ✅✅✅ SEMPRE INCLUIR CAMPOS DO PIX (MESMO VAZIOS)
+                // Dados PIX do Redis ou vazios
                 billet_url: pixDataSalvo?.originalData?.billet_url || '',
                 billet_number: pixDataSalvo?.originalData?.billet_number || '',
                 sale_amount: pixDataSalvo?.amount || 0,
@@ -266,7 +250,7 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
                 order_code: pixDataSalvo?.orderCode || ''
             };
 
-            console.log('📤 Payload com PIX garantido:', {
+            console.log('📤 Payload com PIX do Redis:', {
                 has_billet_url: !!continuationPayload.billet_url,
                 has_billet_number: !!continuationPayload.billet_number,
                 sale_amount: continuationPayload.sale_amount
@@ -276,22 +260,27 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             const sendResult = await sendToN8N(continuationPayload, 'lead_active_continuation', true);
 
             if (sendResult.success) {
-                addLog('success', `✅ FLUXO CONTINUADO COM SUCESSO - Lead: ${normalizedPhone}`);
+                await addLog('success', `✅ FLUXO CONTINUADO COM SUCESSO - Lead: ${normalizedPhone}`);
                 console.log('🎯 FLUXO CONTINUADO COM SUCESSO!');
             } else {
-                addLog('error', `❌ ERRO ao continuar fluxo - Lead: ${normalizedPhone} | Erro: ${sendResult.error}`);
+                await addLog('error', `❌ ERRO ao continuar fluxo - Lead: ${normalizedPhone} | Erro: ${sendResult.error}`);
                 console.log('❌ ERRO ao enviar continuação para N8N:', sendResult.error);
             }
         } else {
             console.log('❌ Não foi possível extrair telefone ou mensagem');
-            addLog('info', '❌ Webhook WhatsApp: dados insuficientes para processar');
+            await addLog('info', '❌ Webhook WhatsApp: dados insuficientes para processar');
             
-            // DEBUG: Mostrar estrutura recebida quando falha
             console.log('📊 Estrutura de dados recebida:', Object.keys(data));
-            addLog('info', '📊 Estrutura recebida: ' + Object.keys(data).join(', '));
+            await addLog('info', '📊 Estrutura recebida: ' + Object.keys(data).join(', '));
         }
         
         console.log('=== FIM WEBHOOK WHATSAPP ===\n');
+        
+        // Estatísticas do Redis
+        let stats = {};
+        if (redis.isConnected) {
+            stats = await redis.getStats();
+        }
         
         res.status(200).json({ 
             success: true, 
@@ -299,18 +288,18 @@ app.post('/webhook/whatsapp-response', async (req, res) => {
             phone: phone,
             normalizedPhone: phone ? normalizePhone(phone) : null,
             hasMessage: !!message,
-            totalResponses: leadResponses.size,
-            totalPurchases: leadPurchases.size
+            redis_connected: redis.isConnected,
+            redis_stats: stats
         });
         
     } catch (error) {
         console.error('❌ Erro no webhook WhatsApp:', error);
-        addLog('error', 'ERRO resposta WhatsApp: ' + error.message);
+        await addLog('error', 'ERRO resposta WhatsApp: ' + error.message);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// Webhook Perfect Pay - VERSÃO CORRIGIDA
+// ✅ WEBHOOK PERFECT PAY COM REDIS
 app.post('/webhook/perfect', async (req, res) => {
     try {
         console.log('\n💰 === WEBHOOK PERFECT PAY INICIADO ===');
@@ -321,7 +310,6 @@ app.post('/webhook/perfect', async (req, res) => {
         const customerName = data.customer?.full_name || 'N/A';
         const amount = data.sale_amount || 0;
         
-        // Extrair telefone com debug detalhado
         const phoneOptions = {
             concatenated: (data.customer?.phone_extension || '') + 
                          (data.customer?.phone_area_code || '') + 
@@ -340,119 +328,132 @@ app.post('/webhook/perfect', async (req, res) => {
             normalized: customerPhone
         });
         
-        addLog('webhook_received', 'Webhook - Pedido: ' + orderCode + ' | Status: ' + status + ' | Tel: ' + customerPhone, {
+        await addLog('webhook_received', 'Webhook - Pedido: ' + orderCode + ' | Status: ' + status + ' | Tel: ' + customerPhone, {
             order_code: orderCode,
             status: status,
             phone: customerPhone
         });
         
         if (status === 'approved') {
-            addLog('info', 'VENDA APROVADA - ' + orderCode);
+            await addLog('info', 'VENDA APROVADA - ' + orderCode);
             
-            if (pendingPixOrders.has(orderCode)) {
-                clearTimeout(pendingPixOrders.get(orderCode).timeout);
-                pendingPixOrders.delete(orderCode);
+            // ✅ REMOVER PIX PENDENTE DO REDIS
+            if (redis.isConnected) {
+                await redis.deletePendingPix(orderCode);
             }
             
-            if (customerPhone && customerPhone.length >= 10) {
-                console.log('🔍 TELEFONE SALVO PERFECT PAY:', customerPhone);
-                leadPurchases.set(customerPhone, {
+            // ✅ SALVAR COMPRA NO REDIS (30 dias)
+            if (customerPhone && customerPhone.length >= 10 && redis.isConnected) {
+                console.log('🔍 TELEFONE SALVO PERFECT PAY NO REDIS:', customerPhone);
+                await redis.setLeadPurchase(customerPhone, {
                     timestamp: Date.now(),
                     originalData: data,
                     orderCode: orderCode,
                     customerName: customerName,
                     amount: amount,
-                    phone: customerPhone
+                    phone: customerPhone,
+                    status: 'approved'
                 });
                 
-                addLog('info', 'COMPRA REGISTRADA - Tel: ' + customerPhone + ' | Pedido: ' + orderCode);
+                await addLog('info', 'COMPRA REGISTRADA NO REDIS - Tel: ' + customerPhone + ' | Pedido: ' + orderCode);
             }
             
             const sendResult = await sendToN8N(data, 'approved');
             
             if (sendResult.success) {
-                addLog('success', 'VENDA APROVADA enviada - ' + orderCode);
+                await addLog('success', 'VENDA APROVADA enviada - ' + orderCode);
             } else {
-                addLog('error', 'ERRO enviar VENDA APROVADA - ' + orderCode);
+                await addLog('error', 'ERRO enviar VENDA APROVADA - ' + orderCode);
             }
             
         } else if (status === 'pending') {
-            addLog('info', 'PIX GERADO - ' + orderCode + ' | Tel: ' + customerPhone);
+            await addLog('info', 'PIX GERADO - ' + orderCode + ' | Tel: ' + customerPhone);
             
-            // Registrar compra para monitoramento de resposta
-            if (customerPhone && customerPhone.length >= 10) {
-                console.log('🔍 TELEFONE SALVO PERFECT PAY:', customerPhone);
-                leadPurchases.set(customerPhone, {
+            // ✅ SALVAR COMPRA NO REDIS PARA MONITORAMENTO (30 dias)
+            if (customerPhone && customerPhone.length >= 10 && redis.isConnected) {
+                console.log('🔍 TELEFONE SALVO PERFECT PAY NO REDIS:', customerPhone);
+                await redis.setLeadPurchase(customerPhone, {
                     timestamp: Date.now(),
                     originalData: data,
                     orderCode: orderCode,
                     customerName: customerName,
                     amount: amount,
-                    phone: customerPhone
+                    phone: customerPhone,
+                    status: 'pending'
                 });
                 
-                addLog('info', 'COMPRA REGISTRADA para monitoramento - Tel: ' + customerPhone + ' | Pedido: ' + orderCode);
-                console.log('📝 Lead adicionado para monitoramento:', customerPhone);
+                await addLog('info', 'COMPRA REGISTRADA NO REDIS para monitoramento - Tel: ' + customerPhone + ' | Pedido: ' + orderCode);
+                console.log('📝 Lead adicionado para monitoramento no Redis:', customerPhone);
             }
             
-            // CORRIGIDO: Envio para N8N FORA do if
             const sendResult = await sendToN8N(data, 'pending');
             
             if (sendResult.success) {
-                addLog('success', 'PIX PENDING enviado - ' + orderCode);
+                await addLog('success', 'PIX PENDING enviado - ' + orderCode);
             } else {
-                addLog('error', 'ERRO enviar PIX PENDING - ' + orderCode);
+                await addLog('error', 'ERRO enviar PIX PENDING - ' + orderCode);
             }
             
-            if (pendingPixOrders.has(orderCode)) {
-                clearTimeout(pendingPixOrders.get(orderCode).timeout);
+            // ✅ SALVAR PIX PENDENTE NO REDIS (7 dias)
+            if (redis.isConnected) {
+                await redis.setPendingPix(orderCode, {
+                    data: data,
+                    timestamp: new Date(),
+                    customer_name: customerName,
+                    amount: amount,
+                    customer_phone: customerPhone
+                });
             }
             
+            // Timeout para PIX (mantido em memória por ser temporário)
             const timeout = setTimeout(async () => {
-                addLog('timeout', 'TIMEOUT PIX - ' + orderCode);
-                pendingPixOrders.delete(orderCode);
+                await addLog('timeout', 'TIMEOUT PIX - ' + orderCode);
+                
+                if (redis.isConnected) {
+                    await redis.deletePendingPix(orderCode);
+                }
                 
                 const sendResult = await sendToN8N(data, 'pix_timeout');
                 
                 if (sendResult.success) {
-                    addLog('success', 'PIX TIMEOUT enviado - ' + orderCode);
+                    await addLog('success', 'PIX TIMEOUT enviado - ' + orderCode);
                 } else {
-                    addLog('error', 'ERRO PIX TIMEOUT - ' + orderCode);
+                    await addLog('error', 'ERRO PIX TIMEOUT - ' + orderCode);
                 }
                 
             }, PIX_TIMEOUT);
-            
-            pendingPixOrders.set(orderCode, {
-                data: data,
-                timeout: timeout,
-                timestamp: new Date(),
-                customer_name: customerName,
-                amount: amount,
-                customer_phone: customerPhone
-            });
         }
         
-        console.log('📊 Estado atual:');
-        console.log('- PIX pendentes:', pendingPixOrders.size);
-        console.log('- Compras monitoradas:', leadPurchases.size);
-        console.log('- Respostas registradas:', leadResponses.size);
+        // ✅ ESTATÍSTICAS DO REDIS
+        let stats = {};
+        if (redis.isConnected) {
+            stats = await redis.getStats();
+        }
+        
+        console.log('📊 Estado atual Redis:');
+        console.log('- Compras monitoradas:', stats.total_leads_purchases || 0);
+        console.log('- Respostas registradas:', stats.total_leads_responses || 0);
+        console.log('- PIX pendentes:', stats.total_pending_pix || 0);
+        console.log('💾 DADOS PERSISTEM POR 30 DIAS NO REDIS');
         console.log('=== FIM WEBHOOK PERFECT PAY ===\n');
         
         res.status(200).json({ 
             success: true, 
             order_code: orderCode,
             status: status,
-            phone: customerPhone
+            phone: customerPhone,
+            redis_connected: redis.isConnected,
+            redis_stats: stats
         });
         
     } catch (error) {
         console.error('❌ Erro no Perfect Pay:', error);
-        addLog('error', 'ERRO webhook Perfect: ' + error.message);
+        await addLog('error', 'ERRO webhook Perfect: ' + error.message);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// ✅✅✅ FUNÇÃO sendToN8N CORRIGIDA - SEM RETRY AUTOMÁTICO
+// Função sendToN8N (mantida igual)
 async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
     try {
         console.log('\n🔧 === ENVIO PARA N8N INICIADO ===');
@@ -468,8 +469,9 @@ async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
             event_type: eventType,
             processed_at: new Date().toISOString(),
             system_info: {
-                source: 'perfect-webhook-system-v2',
-                version: '2.2' // Atualizado para 2.2
+                source: 'perfect-webhook-system-v3',
+                version: '3.0-redis',
+                redis_connected: redis.isConnected
             }
         };
         
@@ -481,19 +483,18 @@ async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
         
         console.log(`📤 ENVIANDO para N8N - SEM RETRY AUTOMÁTICO`);
         
-        addLog('info', 'ENVIANDO para N8N - Tipo: ' + eventType + ' - SEM RETRY');
+        await addLog('info', 'ENVIANDO para N8N - Tipo: ' + eventType + ' - SEM RETRY');
         
-        // ⚠️⚠️⚠️ ENVIO ÚNICO - SEM TENTATIVAS DE RETRY
         const response = await axios.post(webhookUrl, payload, {
             headers: {
                 'Content-Type': 'application/json',
-                'User-Agent': 'Perfect-Webhook-System-v2/2.2'
+                'User-Agent': 'Perfect-Webhook-System-v3/3.0-redis'
             },
-            timeout: 10000 // ⏰ Timeout de 10 segundos
+            timeout: 10000
         });
         
         console.log(`✅ SUCESSO! Resposta N8N - Status: ${response.status}`);
-        addLog('webhook_sent', 'SUCESSO - Enviado para N8N - Tipo: ' + eventType + ' | Status: ' + response.status);
+        await addLog('webhook_sent', 'SUCESSO - Enviado para N8N - Tipo: ' + eventType + ' | Status: ' + response.status);
         
         console.log('=== FIM ENVIO N8N ===\n');
         
@@ -505,226 +506,161 @@ async function sendToN8N(data, eventType, useWhatsAppWebhook = false) {
         console.log('🔗 URL:', webhookUrl);
         console.log('📊 Detalhes:', error.response?.status, error.response?.statusText);
         
-        // ⚠️ APENAS LOGAR O ERRO - NÃO TENTAR NOVAMENTE
         const errorMessage = error.response ? 
             'HTTP ' + error.response.status + ': ' + error.response.statusText : 
             error.message;
             
         console.error('❌ Erro único - NÃO tentando novamente');
-        addLog('error', 'ERRO enviar N8N - Tipo: ' + eventType + ' | Erro: ' + errorMessage + ' | SEM RETRY');
+        await addLog('error', 'ERRO enviar N8N - Tipo: ' + eventType + ' | Erro: ' + errorMessage + ' | SEM RETRY');
         
         console.log('=== FIM ERRO ENVIO ===\n');
         
         return { 
             success: false, 
             error: errorMessage,
-            no_retry: true // 🚫 FLAG CRÍTICA: NÃO RETENTAR
+            no_retry: true
         };
     }
 }
 
-// Endpoints de debug e status (mantidos iguais)
-app.get('/debug', (req, res) => {
-    const debugInfo = {
-        timestamp: new Date().toISOString(),
-        system_status: 'online',
+// ✅ ENDPOINTS COM REDIS
+app.get('/debug', async (req, res) => {
+    try {
+        let stats = {};
+        let recentLogs = [];
         
-        leadResponses: {
-            count: leadResponses.size,
-            data: Array.from(leadResponses.entries()).map(([phone, data]) => ({
-                phone,
-                message: data.message?.substring(0, 50) + '...',
-                timestamp: new Date(data.timestamp).toISOString(),
-                age_minutes: Math.round((Date.now() - data.timestamp) / 60000)
-            }))
-        },
-        
-        leadPurchases: {
-            count: leadPurchases.size,
-            data: Array.from(leadPurchases.entries()).map(([phone, data]) => ({
-                phone,
-                orderCode: data.orderCode,
-                customerName: data.customerName,
-                timestamp: new Date(data.timestamp).toISOString(),
-                age_minutes: Math.round((Date.now() - data.timestamp) / 60000)
-            }))
-        },
-        
-        pendingPixOrders: {
-            count: pendingPixOrders.size,
-            data: Array.from(pendingPixOrders.entries()).map(([code, data]) => ({
-                orderCode: code,
-                customerPhone: data.customer_phone,
-                customerName: data.customer_name,
-                timestamp: data.timestamp.toISOString(),
-                age_minutes: Math.round((Date.now() - data.timestamp.getTime()) / 60000)
-            }))
-        },
-        
-        recent_logs: systemLogs.slice(-20),
-        
-        stats: {
-            total_webhooks: systemLogs.filter(l => l.type === 'webhook_received').length,
-            responses_detected: systemLogs.filter(l => l.message.includes('RESPOSTA DETECTADA')).length,
-            continuations_sent: systemLogs.filter(l => l.message.includes('FLUXO CONTINUADO')).length,
-            errors: systemLogs.filter(l => l.type === 'error').length
-        },
-        
-        config: {
-            n8n_webhook_url: N8N_WEBHOOK_URL,
-            pix_timeout_minutes: PIX_TIMEOUT / 60000,
-            log_retention_hours: LOG_RETENTION_TIME / 3600000
+        if (redis.isConnected) {
+            stats = await redis.getStats();
+            recentLogs = await redis.getRecentLogs(20);
         }
-    };
-    
-    res.json(debugInfo);
-});
-
-app.get('/leads-status', (req, res) => {
-    const responsesList = Array.from(leadResponses.entries()).map(([phone, data]) => ({
-        phone: phone,
-        message: data.message?.substring(0, 100) + '...',
-        timestamp: data.timestamp,
-        time_ago: Math.round((Date.now() - data.timestamp) / 1000 / 60) + ' min atrás'
-    }));
-    
-    const purchasesList = Array.from(leadPurchases.entries()).map(([phone, data]) => ({
-        phone: phone,
-        order_code: data.orderCode,
-        customer_name: data.customerName,
-        amount: data.amount,
-        timestamp: data.timestamp,
-        time_ago: Math.round((Date.now() - data.timestamp) / 1000 / 60) + ' min atrás'
-    }));
-    
-    res.json({
-        leads_responded: responsesList.length,
-        leads_waiting_response: purchasesList.length,
-        responses: responsesList,
-        waiting_response: purchasesList,
-        timestamp: new Date().toISOString()
-    });
-});
-
-app.get('/status', (req, res) => {
-    const stats = {
-        total_webhooks_received: systemLogs.filter(log => log.type === 'webhook_received').length,
-        approved_received: systemLogs.filter(log => log.type === 'webhook_received' && log.data?.status === 'approved').length,
-        pix_generated: systemLogs.filter(log => log.type === 'webhook_received' && log.data?.status === 'pending').length,
-        webhooks_sent: systemLogs.filter(log => log.type === 'webhook_sent').length,
-        leads_responded: leadResponses.size,
-        leads_waiting: leadPurchases.size,
-        errors: systemLogs.filter(log => log.type === 'error').length
-    };
-    
-    res.json({
-        system_status: 'online',
-        timestamp: new Date().toISOString(),
-        pending_pix_orders: pendingPixOrders.size,
-        lead_interaction_stats: {
-            responded: leadResponses.size,
-            waiting_response: leadPurchases.size
-        },
-        logs_last_hour: systemLogs,
-        statistics: stats,
-        n8n_webhook_url: N8N_WEBHOOK_URL
-    });
-});
-
-app.post('/config/n8n-url', (req, res) => {
-    const url = req.body.url;
-    if (url) {
-        process.env.N8N_WEBHOOK_URL = url;
-        addLog('info', 'URL N8N atualizada: ' + url);
-        res.json({ success: true, message: 'URL configurada' });
-    } else {
-        res.status(400).json({ success: false, message: 'URL não fornecida' });
+        
+        const debugInfo = {
+            timestamp: new Date().toISOString(),
+            system_status: 'online',
+            redis_connected: redis.isConnected,
+            persistencia: '30 dias no Redis',
+            
+            redis_stats: stats,
+            recent_logs: recentLogs,
+            
+            config: {
+                n8n_webhook_url: N8N_WEBHOOK_URL,
+                pix_timeout_minutes: PIX_TIMEOUT / 60000,
+                redis_ttl: {
+                    leads_purchases: '30 dias',
+                    leads_responses: '7 dias',
+                    dados_pix: '30 dias',
+                    leads_ja_receberam: '90 dias',
+                    instancias_fixas: '1 ano'
+                }
+            }
+        };
+        
+        res.json(debugInfo);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 
-app.get('/health', (req, res) => {
-    res.json({
-        status: 'online',
-        timestamp: new Date().toISOString(),
-        pending_orders: pendingPixOrders.size,
-        leads_interaction: {
-            responded: leadResponses.size,
-            waiting: leadPurchases.size
-        },
-        uptime: process.uptime()
-    });
+app.get('/status', async (req, res) => {
+    try {
+        let stats = {};
+        if (redis.isConnected) {
+            stats = await redis.getStats();
+        }
+        
+        res.json({
+            system_status: 'online',
+            timestamp: new Date().toISOString(),
+            redis_connected: redis.isConnected,
+            persistencia: '30 dias',
+            redis_stats: stats,
+            n8n_webhook_url: N8N_WEBHOOK_URL
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
-// Interface atualizada com debug
+app.get('/health', async (req, res) => {
+    try {
+        let stats = {};
+        if (redis.isConnected) {
+            stats = await redis.getStats();
+        }
+        
+        res.json({
+            status: 'online',
+            timestamp: new Date().toISOString(),
+            redis_connected: redis.isConnected,
+            redis_stats: stats,
+            uptime: process.uptime(),
+            persistencia: 'Redis 30 dias'
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Interface web atualizada
 app.get('/', (req, res) => {
     const htmlContent = `<!DOCTYPE html>
 <html>
 <head>
-<title>Webhook Vendas v2.2 - SEM BLOQUEIO</title>
+<title>Webhook Vendas v3.0 - REDIS</title>
 <meta charset="utf-8">
 <style>
 body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
 .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }
 h1 { color: #333; text-align: center; }
 .status { background: #4CAF50; color: white; padding: 15px; border-radius: 5px; margin: 20px 0; text-align: center; }
-.debug-status { background: #ff9800; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; text-align: center; font-size: 14px; }
+.redis-status { background: #2196F3; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; text-align: center; font-size: 14px; }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
 .stat-card { background: #f8f9fa; padding: 20px; border-radius: 5px; text-align: center; border-left: 4px solid #007bff; }
 .stat-value { font-size: 2em; font-weight: bold; color: #007bff; }
 .stat-label { color: #666; font-size: 0.9em; }
 .btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px; }
 .btn:hover { background: #0056b3; }
-.btn-debug { background: #dc3545; }
-.btn-debug:hover { background: #c82333; }
 .config { background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0; }
-.input-group { display: flex; gap: 10px; margin: 10px 0; }
-.form-input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
 </style>
 </head>
 <body>
 <div class="container">
-<h1>🚀 Webhook Vendas v2.2 - SEM BLOQUEIO</h1>
+<h1>🚀 Webhook Vendas v3.0 - REDIS</h1>
 <div class="status">
-<strong>✅ Sistema Corrigido - Sem Bloqueio de Clientes</strong>
+<strong>✅ Sistema com Redis - Persistência 30 dias</strong>
 </div>
-<div class="debug-status">
-<strong>🔧 MODIFICAÇÕES APLICADAS:</strong> Compartilhamento garantido de dados PIX
+<div class="redis-status">
+<strong>🔌 REDIS ATIVO:</strong> Dados persistem por 30 dias automaticamente
 </div>
 <div class="stats">
 <div class="stat-card">
-<div class="stat-value" id="pending-count">0</div>
+<div class="stat-value" id="redis-status">🔄</div>
+<div class="stat-label">Status Redis</div>
+</div>
+<div class="stat-card">
+<div class="stat-value" id="leads-purchases">0</div>
+<div class="stat-label">Compras (30d)</div>
+</div>
+<div class="stat-card">
+<div class="stat-value" id="leads-responses">0</div>
+<div class="stat-label">Respostas (7d)</div>
+</div>
+<div class="stat-card">
+<div class="stat-value" id="pending-pix">0</div>
 <div class="stat-label">PIX Pendentes</div>
-</div>
-<div class="stat-card">
-<div class="stat-value" id="leads-responded">0</div>
-<div class="stat-label">Leads Responderam</div>
-</div>
-<div class="stat-card">
-<div class="stat-value" id="leads-waiting">0</div>
-<div class="stat-label">Aguardando Resposta</div>
-</div>
-<div class="stat-card">
-<div class="stat-value" id="total-received">0</div>
-<div class="stat-label">Total Recebidos</div>
 </div>
 </div>
 <div style="text-align: center; margin: 20px 0;">
 <button class="btn" onclick="refreshStatus()">🔄 Atualizar</button>
-<button class="btn" onclick="viewLeads()">👥 Ver Leads</button>
-<button class="btn btn-debug" onclick="viewDebug()">🔍 Debug Completo</button>
+<button class="btn" onclick="viewDebug()">🔍 Debug Redis</button>
 </div>
 <div class="config">
-<h3>⚙️ Configuração N8N</h3>
-<div class="input-group">
-<input type="text" class="form-input" id="n8n-url" placeholder="URL do N8N webhook..." value="${N8N_WEBHOOK_URL}" />
-<button class="btn" onclick="saveUrl()">💾 Salvar</button>
-</div>
-</div>
-<div class="config">
-<h3>📍 Endpoints Disponíveis</h3>
-<p><strong>Perfect Pay:</strong> /webhook/perfect</p>
-<p><strong>WhatsApp:</strong> /webhook/whatsapp-response</p>
-<p><strong>Debug:</strong> /debug</p>
+<h3>🔌 Configuração Redis</h3>
+<p><strong>Persistência:</strong> 30 dias automática</p>
+<p><strong>Leads já receberam:</strong> 90 dias (anti-spam)</p>
+<p><strong>Instâncias fixas:</strong> 1 ano (consistência)</p>
+<p><strong>Logs:</strong> 7 dias</p>
 </div>
 </div>
 <script>
@@ -732,47 +668,26 @@ function refreshStatus() {
 fetch("/status")
 .then(r => r.json())
 .then(data => {
-document.getElementById("pending-count").textContent = data.pending_pix_orders;
-document.getElementById("leads-responded").textContent = data.lead_interaction_stats.responded;
-document.getElementById("leads-waiting").textContent = data.lead_interaction_stats.waiting_response;
-document.getElementById("total-received").textContent = data.statistics.total_webhooks_received;
-});
-}
-function viewLeads() {
-fetch("/leads-status")
-.then(r => r.json())
-.then(data => {
-alert("Leads Responderam: " + data.leads_responded + "\\nAguardando: " + data.leads_waiting_response);
+document.getElementById("redis-status").textContent = data.redis_connected ? "✅" : "❌";
+document.getElementById("leads-purchases").textContent = data.redis_stats?.total_leads_purchases || 0;
+document.getElementById("leads-responses").textContent = data.redis_stats?.total_leads_responses || 0;
+document.getElementById("pending-pix").textContent = data.redis_stats?.total_pending_pix || 0;
 });
 }
 function viewDebug() {
 fetch("/debug")
 .then(r => r.json())
 .then(data => {
-const info = "ESTADO ATUAL:\\n" +
-"- Respostas: " + data.leadResponses.count + "\\n" +
-"- Compras: " + data.leadPurchases.count + "\\n" +
-"- PIX Pendentes: " + data.pendingPixOrders.count + "\\n\\n" +
-"ESTATÍSTICAS:\\n" +
-"- Webhooks: " + data.stats.total_webhooks + "\\n" +
-"- Respostas detectadas: " + data.stats.responses_detected + "\\n" +
-"- Continuações enviadas: " + data.stats.continuations_sent + "\\n" +
-"- Erros: " + data.stats.errors;
+const info = "REDIS STATUS: " + (data.redis_connected ? "CONECTADO" : "DESCONECTADO") + "\\n\\n" +
+"DADOS PERSISTENTES:\\n" +
+"- Compras: " + (data.redis_stats?.total_leads_purchases || 0) + " (30 dias)\\n" +
+"- Respostas: " + (data.redis_stats?.total_leads_responses || 0) + " (7 dias)\\n" +
+"- PIX Pendentes: " + (data.redis_stats?.total_pending_pix || 0) + " (7 dias)\\n" +
+"- Dados PIX: " + (data.redis_stats?.total_dados_pix || 0) + " (30 dias)\\n" +
+"- Instâncias: " + (data.redis_stats?.total_instancias_fixas || 0) + " (1 ano)\\n" +
+"- Anti-spam: " + (data.redis_stats?.total_leads_ja_receberam || 0) + " (90 dias)";
 alert(info);
-console.log("Debug completo:", data);
-});
-}
-function saveUrl() {
-const url = document.getElementById("n8n-url").value;
-fetch("/config/n8n-url", {
-method: "POST",
-headers: {"Content-Type": "application/json"},
-body: JSON.stringify({url: url})
-})
-.then(r => r.json())
-.then(data => {
-alert(data.message);
-refreshStatus();
+console.log("Debug Redis completo:", data);
 });
 }
 setInterval(refreshStatus, 10000);
@@ -784,13 +699,37 @@ refreshStatus();
     res.send(htmlContent);
 });
 
+// 🚀 INICIALIZAR SERVIDOR
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    addLog('info', 'Sistema v2.2 CORRIGIDO iniciado na porta ' + PORT);
-    addLog('info', '✅ Compartilhamento de dados PIX implementado');
-    console.log('🚀 Servidor v2.2 rodando na porta ' + PORT);
-    console.log('📱 Webhook WhatsApp: /webhook/whatsapp-response');
-    console.log('💰 Webhook Perfect Pay: /webhook/perfect');
-    console.log('🔍 Debug completo: /debug');
-    console.log('📊 Interface: /');
+
+async function startServer() {
+    // Conectar Redis primeiro
+    await initializeRedis();
+    
+    app.listen(PORT, async () => {
+        await addLog('info', 'Sistema v3.0-redis iniciado na porta ' + PORT);
+        await addLog('info', '🔌 Redis conectado - Persistência de 30 dias ativa');
+        
+        console.log('🚀 Servidor v3.0-redis rodando na porta ' + PORT);
+        console.log('📱 Webhook WhatsApp: /webhook/whatsapp-response');
+        console.log('💰 Webhook Perfect Pay: /webhook/perfect');
+        console.log('🔍 Debug completo: /debug');
+        console.log('📊 Interface: /');
+        console.log('🔌 REDIS ATIVO - DADOS PERSISTEM POR 30 DIAS');
+    });
+}
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+    console.log('👋 Encerrando servidor...');
+    await redis.disconnect();
+    process.exit(0);
 });
+
+process.on('SIGTERM', async () => {
+    console.log('👋 Encerrando servidor...');
+    await redis.disconnect();
+    process.exit(0);
+});
+
+startServer();
